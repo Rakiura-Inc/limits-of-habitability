@@ -1,0 +1,7 @@
+cff-version: 1.2.0
+message: "If you use these notebooks, please cite the data papers listed in README.md."
+title: "Limits of Habitability bootcamp notebooks"
+authors:
+  - name: "Rakiura"
+license: MIT
+repository-code: "https://github.com/Rakiura-Inc/limits-of-habitability"

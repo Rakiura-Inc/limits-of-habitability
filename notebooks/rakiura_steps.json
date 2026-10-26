@@ -1,0 +1,54 @@
+{
+  "_about": "Where each notebook part counts on Rakiura. A PI links each part name to a step's checklist item under Settings > Notebook links, keyed by the notebook path. The notebooks carry no Rakiura ids.",
+  "notebooks": {
+    "01_find_your_test_planet.ipynb": {
+      "parts": {
+        "planet-picked": "Part 1 handed in",
+        "planet-weighed": "Part 2 handed in"
+      }
+    },
+    "02_planet_or_star.ipynb": {
+      "parts": {
+        "cycle-found": "activity cycle handed in"
+      }
+    },
+    "03_find_the_dip.ipynb": {
+      "parts": {
+        "dip-measured": "transit depth and radius handed in"
+      }
+    },
+    "04_weigh_a_planet.ipynb": {
+      "parts": {
+        "fake-planet-fitted": "Part 1 handed in",
+        "real-planet-fitted": "Part 2 handed in",
+        "transit-swing-read": "Extra handed in"
+      }
+    },
+    "tess_01_vet_a_candidate.ipynb": {
+      "parts": {
+        "vetting-sheet": "vetting sheet handed in"
+      }
+    },
+    "tess_02_radius_and_mass.ipynb": {
+      "parts": {
+        "joint-fit": "Part 1 handed in",
+        "star-assumption": "Part 2 handed in"
+      }
+    },
+    "gaia_01_first_orbitize_fit.ipynb": {
+      "parts": {
+        "orbitize-runs": "both runs handed in"
+      }
+    },
+    "gaia_02_who_feels_a_pull.ipynb": {
+      "parts": {
+        "pull-table": "acceleration table handed in"
+      }
+    },
+    "gaia_03_inner_planet_from_velocities.ipynb": {
+      "parts": {
+        "inner-planet-fitted": "iota Dra b fit handed in"
+      }
+    }
+  }
+}
