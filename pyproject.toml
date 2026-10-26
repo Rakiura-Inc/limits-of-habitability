@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "habtrain"
+version = "0.1.0"
+description = "Plumbing for the Limits of Habitability bootcamp notebooks: fetch the public catalogs, fit orbits, plot, record answers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Rakiura" }]
+classifiers = ["License :: OSI Approved :: MIT License"]
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "astropy>=5.3",
+  "emcee>=3.1",
+  "corner>=2.2",
+  "lightkurve>=2.4",
+  "ipywidgets>=8",
+]
+
+[project.optional-dependencies]
+tess = ["batman-package>=2.4", "astroquery>=0.4.7", "setuptools"]
+orbits = ["orbitize>=3.4", "scipy>=1.10"]
+notebooks = ["jupyterlab>=4", "ipykernel>=6"]
+dev = ["pytest>=7", "nbclient>=0.9", "nbformat>=5.9", "ipykernel>=6", "jupytext>=1.16"]
+
+[tool.setuptools]
+packages = ["habtrain"]
+
+[tool.setuptools.package-data]
+habtrain = ["planets.csv"]
