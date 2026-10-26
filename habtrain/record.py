@@ -177,10 +177,10 @@ def handin(part: str, names: list[str], figures: dict | None = None, numbers: di
         "predictions": {q: dict(p, made_before_reveal=(q not in _reveals or p["at"] <= _reveals[q]))
                         for q, p in _predictions.items()},
     }
-    with open(os.path.join(out, "answers.json"), "w") as fh:
+    with open(os.path.join(out, "results.json"), "w") as fh:
         json.dump(record, fh, indent=2, default=str)
     md = table(names)
-    with open(os.path.join(out, "answers.md"), "w") as fh:
+    with open(os.path.join(out, "results.md"), "w") as fh:
         fh.write(md + "\n")
     try:
         from IPython.display import Markdown, display
@@ -190,10 +190,10 @@ def handin(part: str, names: list[str], figures: dict | None = None, numbers: di
     if record["missing"]:
         print(f"{len(record['missing'])} question(s) still unanswered. You can hand in anyway, or answer them and run this cell again.")
     portal.done(part, figures=figs, numbers=numbers)
-    portal.stage_file(json.dumps(record, indent=1, default=str), f"{part} answers.json")
-    files = ", ".join(["answers.md (the table above)", "answers.json"] + [f"{f}.png" for f in (figures or {})])
+    portal.stage_file(json.dumps(record, indent=1, default=str), f"{part} results.json")
+    files = ", ".join(["results.md (the table above)", "results.json"] + [f"{f}.png" for f in (figures or {})])
     # Say exactly what to hand in and where the files are, connected or not.
     print(f"Saved in the folder {os.path.relpath(out)}/ : {files}.\n"
           "To hand in: open this step in Rakiura, press Hand in, and attach these files or paste the table. "
           "In Colab the folder is in the Files panel on the left; right-click a file to download it.\n"
-          "If you connected this notebook to Rakiura, your plots are already on the step. Attach answers.md or paste the table, then press Hand in.")
+          "If you connected this notebook to Rakiura, your plots are already on the step. Attach results.md or paste the table, then press Hand in.")
