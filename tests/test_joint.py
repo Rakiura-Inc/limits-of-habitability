@@ -104,3 +104,13 @@ def test_prepare_keeps_data_near_transit_and_leaves_out_velocities_taken_during_
     hours = ht.fit.hours_from_transit(prep.t_lc, P, t0_btjd)
     assert np.abs(hours).max() < 1.5 * 2.0 + 0.01  # only data within 1.5 transit durations
     assert prep.flux.min() == pytest.approx(-(RATIO**2) * 1e3, rel=0.3)  # parts per thousand
+
+
+def test_joint_fit_runs_the_steps_asked_for_unless_ci_shortens_them(monkeypatch, capsys):
+    monkeypatch.delenv(ht.joint.CI_STEPS_VARIABLE, raising=False)
+    assert ht.joint._steps_to_run(20000) == 20000
+    assert capsys.readouterr().out == ""
+    monkeypatch.setenv(ht.joint.CI_STEPS_VARIABLE, "2000")
+    assert ht.joint._steps_to_run(20000) == 2000
+    assert ht.joint._steps_to_run(500) == 500  # never more steps than asked for
+    assert "runs 2000 steps instead of 20000" in capsys.readouterr().out

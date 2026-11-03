@@ -8,6 +8,7 @@ duration becomes a size for the orbit and the depth becomes a radius in Earth un
 
 from __future__ import annotations
 
+import os
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -31,6 +32,11 @@ T0_WINDOW = 0.1  # days the transit time may move
 P_WINDOW = 0.01  # days the period may move
 LOG_JITTER_LC = (-10, 3)
 MAX_ABS_LOG_JITTER_RV = 5
+
+# For CI only. The notebook job sets this so the joint fits run a few thousand steps and the job ends in
+# minutes, not half an hour. Colab and a member's own computer never set it, so their fits run the steps
+# the notebook asks for.
+CI_STEPS_VARIABLE = "HABTRAIN_CI_JOINT_FIT_STEPS"
 
 TRANSIT_SUPERSAMPLE = 3  # model points per 2-minute exposure
 NEAR_TRANSIT = 1.5  # keep light-curve points within this many transit durations of mid-transit
@@ -195,12 +201,23 @@ def _start(Tref: float, P: float, star_mass: tuple, star_radius: tuple, n_telesc
     return np.array(value), np.array(spread)
 
 
+def _steps_to_run(steps: int) -> int:
+    """The steps the fit was asked for, or fewer when CI_STEPS_VARIABLE is set (CI only)."""
+    ci_steps = os.environ.get(CI_STEPS_VARIABLE)
+    if ci_steps is None:
+        return steps
+    ci_steps = min(int(ci_steps), steps)
+    print(f"{CI_STEPS_VARIABLE} is set, so this fit runs {ci_steps} steps instead of {steps}.")
+    return ci_steps
+
+
 def fit(
     prep: Prepared, star_mass: tuple, star_radius: tuple, steps: int = 20000, walkers: int = 48, seed: int = 1
 ) -> JointResult:
     """Fit transit and velocities together. star_mass and star_radius are (value, uncertainty), in solar units."""
     import emcee
 
+    steps = _steps_to_run(steps)
     Ms, eMs = star_mass
     Rs, eRs = star_radius
     started = time.time()

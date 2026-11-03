@@ -113,3 +113,33 @@ def test_best_fit_refuses_an_orbit_that_cannot_be_real(iota_dra):
     start = ht.orbits.b_start(iota_dra)  # c's mass is 0 here, which is refused
     log_like, _ = ht.orbits.best_fit(iota_dra, start, ["gamma_apf"], [0.0])
     assert log_like == -ht.orbits.REFUSED
+
+
+@pytest.fixture
+def vizier_default(monkeypatch):
+    """The server astroquery's new Vizier queries use, put back after the test."""
+    from astroquery.vizier import VizierClass
+
+    defaults = VizierClass.__init__.__kwdefaults__
+    monkeypatch.setitem(defaults, "vizier_server", defaults["vizier_server"])
+    return defaults
+
+
+def test_vizier_stays_at_cds_when_it_answers(archive, vizier_default, capsys):
+    archive["vizier.cds.unistra.fr"] = b"<VOTABLE/>"
+    assert ht.orbits.use_answering_vizier() == "vizier.cds.unistra.fr"
+    assert vizier_default["vizier_server"] == "vizier.cds.unistra.fr"
+    assert capsys.readouterr().out == ""
+
+
+def test_vizier_moves_to_a_mirror_when_cds_does_not_answer(archive, vizier_default, capsys):
+    archive["vizier.cfa.harvard.edu"] = b"<VOTABLE/>"
+    assert ht.orbits.use_answering_vizier() == "vizier.cfa.harvard.edu"
+    assert vizier_default["vizier_server"] == "vizier.cfa.harvard.edu"
+    assert "mirror vizier.cfa.harvard.edu" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("vizier_default")
+def test_vizier_says_to_wait_when_no_server_answers():
+    with pytest.raises(RuntimeError, match="Wait a few minutes"):
+        ht.orbits.use_answering_vizier()

@@ -19,11 +19,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .data import fetch
+from .data import DOWNLOAD_ERRORS, DOWNLOAD_TIMEOUT_SECONDS, fetch
 
 MJUP_IN_MSUN = 9.547919e-4  # Jupiter's mass in solar masses (IAU 2015)
 MJD_OFFSET = 2400000.5  # modified Julian date = Julian date minus this
 HGCA_URL = "https://cdsarc.cds.unistra.fr/ftp/J/ApJS/254/42/HGCA_vEDR3.fits"
+
+# orbitize! looks a star up in the Hipparcos catalog (VizieR I/311) through astroquery. These are
+# the VizieR servers to ask, in turn: CDS, then its mirrors at Harvard and in Cape Town.
+VIZIER_SERVERS = ("vizier.cds.unistra.fr", "vizier.cfa.harvard.edu", "vizier.idia.ac.za")
+VIZIER_TEST_QUERY = "https://{server}/viz-bin/votable?-source=I/311/hip2&-out=HIP&-out.max=1"
 
 # iota Draconis (HIP 75458). Star mass from asteroseismology and parallax from Gaia EDR3, both as
 # Hill et al. 2021 and the catalog of accelerations give them.
@@ -92,6 +97,41 @@ def hgca_row(hip: int) -> dict | None:
         if len(r) == 0:
             return None
         return {name: _plain_value(r[0][name]) for name in d.columns.names}
+
+
+def _vizier_answers(server: str) -> bool:
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - fixed https URLs
+            VIZIER_TEST_QUERY.format(server=server), timeout=DOWNLOAD_TIMEOUT_SECONDS
+        ):
+            return True
+    except DOWNLOAD_ERRORS:
+        return False
+
+
+def _first_answering_vizier() -> str | None:
+    for server in VIZIER_SERVERS:
+        if _vizier_answers(server):
+            return server
+    return None
+
+
+def use_answering_vizier() -> str:
+    """Send astroquery's VizieR queries, and so orbitize!'s, to the first server in VIZIER_SERVERS that answers.
+
+    Returns the server's name. Prints a line when it is the mirror, not CDS.
+    """
+    from astroquery.vizier import VizierClass
+
+    server = _first_answering_vizier()
+    if server is None:
+        msg = "Neither VizieR at CDS nor its mirrors answered. Wait a few minutes and run the cell again."
+        raise RuntimeError(msg)
+    if server != VIZIER_SERVERS[0]:
+        print(f"VizieR at CDS did not answer, so the Hipparcos catalog comes from its mirror {server}.")
+    # Each new astroquery query takes its server from this default, which astroquery fixes when it is imported.
+    VizierClass.__init__.__kwdefaults__["vizier_server"] = server
+    return server
 
 
 def pull_sigma(chi2: float, dof: int = 2) -> float:

@@ -109,18 +109,42 @@ jobs:
           python-version: ${{ env.NOTEBOOK_PYTHON }}
           version: ${{ env.UV_VERSION }}
 
-      # The archive tables and TESS light curves, so a run does not download them all again.
-      - name: Cache downloaded data
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: |
-            notebooks/data
-            ~/.lightkurve/cache
-          key: notebook-data-${{ hashFiles('habtrain/data.py') }}
-          restore-keys: notebook-data-
-
       - name: Install Python dependencies
         run: uv sync --locked --all-extras
 
+      # The archive files, keyed on the checksums recorded for them, so the job does not need CDS or its
+      # mirror to be up. `make data` checks every file, from the cache or new, against those checksums.
+      - name: Restore the archive files
+        id: archive-files
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: notebooks/data
+          key: archive-files-${{ hashFiles('habtrain/archive_files.csv') }}
+
+      - name: Download and check the archive files
+        run: make data
+
+      # Saved now, not at the end of the job, so a notebook that fails later still leaves them cached.
+      - name: Save the archive files
+        if: steps.archive-files.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: notebooks/data
+          key: ${{ steps.archive-files.outputs.cache-primary-key }}
+
+      # TESS light curves (MAST) and astroquery's answers, so a run asks those archives again less often.
+      - name: Cache other downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.lightkurve/cache
+            ~/.astropy/cache
+          key: notebook-downloads-${{ hashFiles('uv.lock') }}
+          restore-keys: notebook-downloads-
+
       - name: Run every notebook with blank answers
+        env:
+          # tess_02's two joint fits take about half an hour at the notebook's 20,000 steps. CI runs them
+          # short to check that the notebook works; members always run the full fit (habtrain/joint.py).
+          HABTRAIN_CI_JOINT_FIT_STEPS: 2000
         run: make run

@@ -2,12 +2,13 @@
 #   make local   install the package with both projects' extras and the dev tools, then open Jupyter Lab
 #   make test    run the tests
 #   make lint    run every git hook (ruff, nbstripout and the rest) on every file
+#   make data    download the archive files into notebooks/data/ and check them against their checksums
 #   make run     execute every notebook headless (blank answers, offline) into notebooks/executed/
 
 RAKIURA_HELPER ?= rakiura @ git+https://github.com/Rakiura-Inc/rakiura-py@main
 NOTEBOOKS := $(wildcard notebooks/*.ipynb)
 
-.PHONY: local install test lint run clean
+.PHONY: local install test lint data run clean
 
 local: install
 	uv run --all-extras jupyter lab notebooks
@@ -23,7 +24,10 @@ test:
 lint:
 	uvx prek run --all-files
 
-run:
+data:
+	uv run --all-extras python scripts/fetch_archive_files.py
+
+run: data
 	@mkdir -p notebooks/executed
 	@for nb in $(NOTEBOOKS); do \
 		echo "running $$nb"; \

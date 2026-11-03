@@ -1,8 +1,10 @@
 """Fetch and parse the public data releases the notebooks use.
 
 Every file comes from the CDS archive (VizieR) the first time it is needed and is cached in
-`data/` next to the notebook. A file whose checksum does not match the one recorded here still
-loads, with one warning line: the archive may have reissued it.
+`data/` next to the notebook. When CDS does not answer, the file comes from its mirror at the
+National Astronomical Observatory of Japan instead, and is used only if its checksum matches the
+one recorded in `archive_files.csv`. A file from CDS whose checksum does not match still loads,
+with one warning line: the archive may have reissued it.
 
     Habitable zone catalog    Hill et al. 2023, AJ 165, 34            VizieR J/AJ/165/34
     Activity cycles           Isaacson et al. 2024, ApJS 274, 35      VizieR J/ApJS/274/35
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import http.client
 import io
 import os
 import urllib.parse
@@ -29,22 +32,25 @@ import pandas as pd
 
 from .constants import BTJD
 
-CDS = ("https://cdsarc.cds.unistra.fr/ftp/",)  # copies of the archive, tried in turn
+CDS = "https://cdsarc.cds.unistra.fr/ftp/"
+# The full mirror of the CDS archive in Japan. It serves plain http only, which is why a file from
+# it must match its recorded checksum before it is used.
+MIRROR = "http://vizier.nao.ac.jp/ftp/cats/"
+MIRROR_NAME = "its mirror in Japan (vizier.nao.ac.jp)"
+DOWNLOAD_TIMEOUT_SECONDS = 20  # how long to wait for an archive that does not answer
 ARCHIVE_TAP = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?"
 CACHE = os.environ.get("HABTRAIN_DATA", "data")
 PLANETS_CSV = Path(__file__).with_name("planets.csv")
+ARCHIVE_FILES_CSV = Path(__file__).with_name("archive_files.csv")
 
-# Checksums of the files as fetched on 2026-10-25 (gzipped files: of the unzipped bytes).
-SHA256 = {
-    "J/AJ/165/34/table1.dat": "38a21f64a660d92e10812f847bc68e50951ebcba0d3e8e4b3299f989e8fc2fbb",
-    "J/ApJS/274/35/table2.dat": "ff11036825b1915ca1228f8c8cdb6c17553989bda4e96a7c278e64595ec167be",
-    "J/ApJS/274/35/table3.dat.gz": "a522f68c01db21c4adae071c7c4cf103ccb32273d5ebbcdb78b9aaa1488cd2d9",
-    "J/ApJS/274/35/table4.dat": "6976ae9dd0dda35d0afe0237c515c6a15465ef869978ffae86c2c86ef3f1fdf5",
-    "J/ApJS/272/32/tksxxrvs.dat": "d4cc7a7c3ee23030ce7a84f4226cf29b6601ee0e2171b7b37adf3d9f62362273",
-    "J/ApJS/272/32/table6.dat": "ad9fd91d095887dbdc3dfe025c0320beb2264084baa0dedf71fadddfb8e67e26",
-    "J/AJ/162/211/table1.dat": "df2ae92f0ed6c442aa2e28c32420ba7fc69b21d2fe98291ba690b41d02591e18",
-    "J/ApJ/646/505/table1.dat": "4ccf041207e4490e10ad8c0c85ab81b4c4aae55c420f63041dea36d43e2a65d6",
-}
+
+def _recorded_checksums() -> dict[str, str]:
+    """The SHA-256 of every archive file the notebooks read (gzipped files: of the unzipped bytes)."""
+    table = pd.read_csv(ARCHIVE_FILES_CSV)
+    return dict(zip(table.path, table.sha256, strict=True))
+
+
+SHA256 = _recorded_checksums()
 
 SUN_TEFF = 5772  # K
 EARTH_INSOLATION = 1361  # W/m2
@@ -63,30 +69,57 @@ def _cache_path(path: str) -> Path:
     return Path(CACHE) / path.replace("/", "_").removesuffix(".gz")
 
 
-def _download(path: str) -> bytes:
-    """The bytes of one archive file, from the first copy of the archive that answers."""
-    error = None
-    for base in CDS:
-        try:
-            with urllib.request.urlopen(base + path, timeout=60) as response:  # noqa: S310 - a fixed https URL
-                return response.read()
-        except Exception as exc:  # noqa: BLE001 - try the next copy; report the last failure
-            error = exc
-    msg = f"Could not download {path} from the CDS archive ({error}). Check your connection and run the cell again."
-    raise RuntimeError(msg)
+# What a download that fails raises: no connection, a timeout, an HTTP error, or a cut-off reply.
+DOWNLOAD_ERRORS = (OSError, http.client.HTTPException)
+
+
+def _read_url(url: str) -> bytes:
+    """The bytes at `url`, gzip already unpacked when the file name ends in .gz."""
+    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed archive URLs
+        raw = response.read()
+    if url.endswith(".gz"):
+        raw = gzip.decompress(raw)
+    return raw
+
+
+def _matches_record(path: str, raw: bytes) -> bool:
+    """True when the file has the checksum recorded for it, or when none is recorded."""
+    expected = SHA256.get(path)
+    return expected is None or hashlib.sha256(raw).hexdigest() == expected
+
+
+def _from_mirror(path: str, cds_error: Exception) -> bytes:
+    """The file from the CDS mirror, used only if it is exactly the recorded file."""
+    try:
+        raw = _read_url(MIRROR + path)
+    except DOWNLOAD_ERRORS as mirror_error:
+        msg = (
+            f"Could not download {path} from the CDS archive ({cds_error}) or {MIRROR_NAME} ({mirror_error}). "
+            "Check your connection and run the cell again."
+        )
+        raise RuntimeError(msg) from None
+    if not _matches_record(path, raw):
+        msg = (
+            f"The CDS archive did not answer, and the copy of {path} on {MIRROR_NAME} is not the file this "
+            "notebook was written against. Wait a few minutes and run the cell again."
+        )
+        raise RuntimeError(msg)
+    print(f"The CDS archive did not answer, so {path} came from {MIRROR_NAME}. It is the same file.")
+    return raw
 
 
 def fetch(path: str) -> bytes:
-    """The bytes of one archive file (gzip already unpacked), from the cache or the archive."""
+    """The bytes of one archive file (gzip already unpacked), from the cache, CDS, or the CDS mirror."""
     local = _cache_path(path)
     if local.exists():
         return local.read_bytes()
-    raw = _download(path)
-    if path.endswith(".gz"):
-        raw = gzip.decompress(raw)
-    expected = SHA256.get(path)
-    if expected and hashlib.sha256(raw).hexdigest() != expected:
-        print(f"Note: {path} differs from the copy this notebook was written against. It still loads.")
+    try:
+        raw = _read_url(CDS + path)
+    except DOWNLOAD_ERRORS as cds_error:
+        raw = _from_mirror(path, cds_error)
+    else:
+        if not _matches_record(path, raw):
+            print(f"Note: {path} differs from the copy this notebook was written against. It still loads.")
     local.parent.mkdir(parents=True, exist_ok=True)
     local.write_bytes(raw)
     return raw

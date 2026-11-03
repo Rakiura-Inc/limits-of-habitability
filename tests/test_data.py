@@ -260,3 +260,25 @@ def test_fetch_is_quiet_when_the_checksum_matches(archive, cache, capsys, monkey
 def test_fetch_offline_says_to_check_the_connection():
     with pytest.raises(RuntimeError, match="Check your connection"):
         ht.data.fetch("J/X/1/missing.dat")
+
+
+def test_fetch_uses_the_mirror_when_cds_does_not_answer_and_says_so(archive, cache, capsys, monkeypatch):
+    archive["vizier.nao.ac.jp/ftp/cats/J/X/1/m.dat"] = b"same"
+    monkeypatch.setitem(ht.data.SHA256, "J/X/1/m.dat", hashlib.sha256(b"same").hexdigest())
+    assert ht.data.fetch("J/X/1/m.dat") == b"same"
+    assert archive.urls == [ht.data.CDS + "J/X/1/m.dat", ht.data.MIRROR + "J/X/1/m.dat"]
+    assert "came from its mirror in Japan" in capsys.readouterr().out
+    assert (cache.path / "J_X_1_m.dat").read_bytes() == b"same"
+
+
+@pytest.mark.usefixtures("cache")
+def test_fetch_refuses_a_mirror_copy_that_is_not_the_recorded_file(archive, monkeypatch):
+    archive["vizier.nao.ac.jp/ftp/cats/J/X/1/m.dat"] = b"changed"
+    monkeypatch.setitem(ht.data.SHA256, "J/X/1/m.dat", hashlib.sha256(b"same").hexdigest())
+    with pytest.raises(RuntimeError, match="is not the file"):
+        ht.data.fetch("J/X/1/m.dat")
+
+
+def test_every_file_the_notebooks_read_has_a_recorded_checksum():
+    assert len(ht.data.SHA256) == 8
+    assert all(len(checksum) == 64 for checksum in ht.data.SHA256.values())
