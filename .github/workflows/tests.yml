@@ -1,0 +1,126 @@
+# Adapted from https://docs.astral.sh/uv/guides/integration/github/#using-uv-in-github-actions
+
+name: "Tests"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request: ~
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The Python Colab runs. Change it when Colab does, not when Python releases.
+  NOTEBOOK_PYTHON: "3.12"
+  # renovate: datasource=pypi depName=uv
+  UV_VERSION: 0.13.7
+
+jobs:
+  run-tests:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-26.04
+    # Python 3.15 builds pandas and h5py from source until they publish 3.15 wheels.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+          - "3.15"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv ${{ env.UV_VERSION }} & Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+          version: ${{ env.UV_VERSION }}
+
+      # h5py (needed by orbitize!) has no Python 3.15 wheel yet, so it is built against the system's HDF5.
+      - name: Install HDF5 for Python 3.15
+        if: matrix.python-version == '3.15'
+        run: sudo apt-get update && sudo apt-get install --yes libhdf5-dev
+
+      - name: Install Python dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Run tests
+        run: uv run pytest
+
+  build-package:
+    name: build, install and import the wheel
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv ${{ env.UV_VERSION }} & Python ${{ env.NOTEBOOK_PYTHON }}
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+          python-version: ${{ env.NOTEBOOK_PYTHON }}
+          version: ${{ env.UV_VERSION }}
+
+      - name: Build package
+        run: uv build
+
+      - name: Install the wheel on its own, as a notebook's setup cell does
+        run: |
+          uv venv wheel-check
+          uv pip install --python wheel-check dist/*.whl
+
+      - name: Verify import works and the planet table ships with it
+        run: wheel-check/bin/python -c "import habtrain as ht; print(ht.__version__, len(ht.data.planets()), 'planets')"
+
+  run-notebooks:
+    name: run every notebook headless
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv ${{ env.UV_VERSION }} & Python ${{ env.NOTEBOOK_PYTHON }}
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+          python-version: ${{ env.NOTEBOOK_PYTHON }}
+          version: ${{ env.UV_VERSION }}
+
+      # The archive tables and TESS light curves, so a run does not download them all again.
+      - name: Cache downloaded data
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            notebooks/data
+            ~/.lightkurve/cache
+          key: notebook-data-${{ hashFiles('habtrain/data.py') }}
+          restore-keys: notebook-data-
+
+      - name: Install Python dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Run every notebook with blank answers
+        run: make run

@@ -1,35 +1,73 @@
 [build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.build_meta"
+build-backend = "hatchling.build"
+requires = [ "hatchling" ]
 
 [project]
 name = "habtrain"
 version = "0.1.0"
-description = "Plumbing for the Limits of Habitability bootcamp notebooks: fetch the public catalogs, fit orbits, plot, record answers."
+description = """\
+    Plumbing for the Limits of Habitability bootcamp notebooks: fetch the public catalogs, fit orbits, plot, record \
+    answers.\
+    """
 readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "Rakiura" }]
-classifiers = ["License :: OSI Approved :: MIT License"]
+license = "MIT"
+authors = [ { name = "Rakiura" } ]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+]
+# Lower bounds only, kept low on purpose: Colab already has most of these, and a notebook's setup
+# cell should not replace them (that forces a restart). uv.lock pins the versions CI tests.
 dependencies = [
-  "numpy>=1.24",
-  "pandas>=2.0",
-  "matplotlib>=3.7",
-  "astropy>=5.3",
-  "emcee>=3.1",
-  "corner>=2.2",
-  "lightkurve>=2.4",
-  "ipywidgets>=8",
+    "astropy>=5.3",
+    "corner>=2.2",
+    "emcee>=3.1",
+    "ipywidgets>=8",
+    "lightkurve>=2.4",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pandas>=2",
 ]
 
 [project.optional-dependencies]
-tess = ["batman-package>=2.4", "astroquery>=0.4.7", "setuptools"]
-orbits = ["orbitize>=3.4", "scipy>=1.10"]
-notebooks = ["jupyterlab>=4", "ipykernel>=6"]
-dev = ["pytest>=7", "nbclient>=0.9", "nbformat>=5.9", "ipykernel>=6", "jupytext>=1.16"]
+orbits = [ "orbitize>=3.4", "scipy>=1.10" ]
+# batman imports distutils, which Python 3.12 removed; setuptools provides it again.
+tess = [ "astroquery>=0.4.7", "batman-package>=2.4", "setuptools" ]
 
-[tool.setuptools]
-packages = ["habtrain"]
+[project.urls]
+Issues = "https://github.com/Rakiura-Inc/limits-of-habitability/issues"
+Source = "https://github.com/Rakiura-Inc/limits-of-habitability"
 
-[tool.setuptools.package-data]
-habtrain = ["planets.csv"]
+[dependency-groups]
+dev = [
+    "nbconvert==7.17.2",
+    # Having ruff in the venv helps with IDE's auto lint/format integrations
+    "ruff==0.17.3",
+    { include-group = "notebooks" },
+    { include-group = "pytest" },
+]
+notebooks = [
+    "ipykernel==7.4.0",
+    "jupyterlab==4.6.5",
+]
+pytest = [
+    "pytest==9.2.0",
+    "pytest-randomly==5.0.0",
+    "pytest-xdist==3.8.0",
+]
+
+[tool.uv]
+# The earliest version that supports the current lock file revision
+required-version = ">=0.8.4"
+# batman-package 2.5.3 has wheels only up to Python 3.13 and no source to build, so the lock must pick
+# a release that installs on every Python this package supports.
+required-environments = [ "python_version >= '3.14'" ]
+
+[tool.codespell]
+# TOI: TESS Object of Interest, as in TOI-669 b.
+ignore-words-list = "toi"
