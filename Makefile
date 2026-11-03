@@ -7,6 +7,8 @@
 
 RAKIURA_HELPER ?= rakiura @ git+https://github.com/Rakiura-Inc/rakiura-py@main
 NOTEBOOKS := $(wildcard notebooks/*.ipynb)
+# Seconds one cell may run before make run stops. CI sets it lower, so a stuck cell fails fast and is named.
+CELL_TIMEOUT ?= 3600
 
 .PHONY: local install test lint data run clean
 
@@ -32,7 +34,7 @@ run: data
 	@for nb in $(NOTEBOOKS); do \
 		echo "running $$nb"; \
 		RAKIURA_LIVE=0 uv run --all-extras jupyter nbconvert --to notebook --execute \
-			--ExecutePreprocessor.timeout=3600 --output-dir notebooks/executed "$$nb" || exit 1; \
+			--ExecutePreprocessor.timeout=$(CELL_TIMEOUT) --output-dir notebooks/executed "$$nb" || exit 1; \
 	done
 
 clean:
