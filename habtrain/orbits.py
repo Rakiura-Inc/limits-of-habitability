@@ -1,5 +1,7 @@
-"""Plumbing for the Gaia and radial velocity project: the catalog of accelerations, iota Draconis's
-public velocities, and a two-stage best fit that gives orbitize!'s sampler a sensible start.
+"""Plumbing for the Gaia and radial velocity project.
+
+The catalog of accelerations, iota Draconis's public velocities, and a two-stage best fit that
+gives orbitize!'s sampler a sensible start.
 
 orbitize! (Blunt et al. 2020, AJ 159, 89) does the orbit fitting. It is an optional install:
 pip install "habtrain[orbits]". Everything here imports it only when needed.
@@ -8,25 +10,24 @@ pip install "habtrain[orbits]". Everything here imports it only when needed.
     iota Dra, APF velocities   Hill et al. 2021, AJ 162, 211          VizieR J/AJ/162/211
     iota Dra, Lick velocities  Butler et al. 2006, ApJ 646, 505       VizieR J/ApJ/646/505
 """
+
 from __future__ import annotations
 
-import os
+import urllib.request
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from .data import SHA256, fetch
+from .data import fetch
 
-SHA256.update({
-    "J/AJ/162/211/table1.dat": "df2ae92f0ed6c442aa2e28c32420ba7fc69b21d2fe98291ba690b41d02591e18",
-    "J/ApJ/646/505/table1.dat": "4ccf041207e4490e10ad8c0c85ab81b4c4aae55c420f63041dea36d43e2a65d6",
-})
-
-MJUP_IN_MSUN = 9.547919e-4     # Jupiter's mass in solar masses (IAU 2015)
+MJUP_IN_MSUN = 9.547919e-4  # Jupiter's mass in solar masses (IAU 2015)
+MJD_OFFSET = 2400000.5  # modified Julian date = Julian date minus this
+HGCA_URL = "https://cdsarc.cds.unistra.fr/ftp/J/ApJS/254/42/HGCA_vEDR3.fits"
 
 # iota Draconis (HIP 75458). Star mass from asteroseismology and parallax from Gaia EDR3, both as
 # Hill et al. 2021 and the catalog of accelerations give them.
-IOTA_DRA = dict(hip=75458, star_mass=1.54, star_mass_err=0.09, parallax=32.5239, parallax_err=0.131)
+IOTA_DRA = {"hip": 75458, "star_mass": 1.54, "star_mass_err": 0.09, "parallax": 32.5239, "parallax_err": 0.131}
 
 # iota Dra b from velocities alone: Hill et al. 2021, table 3 (RadVel fit), value, minus, plus.
 IOTA_DRA_B_PUBLISHED = {
@@ -43,6 +44,11 @@ _B_PERIOD_DAYS = 510.855
 _B_PERIASTRON_JD = 2452014.19
 _B_OMEGA_STAR = 1.5696
 
+# Orbits the best fit refuses, because they cannot be real or are not what the notebook looks for.
+MAX_ECCENTRICITY = 0.95
+OUTER_SMA_RANGE = (3, 100)  # AU: where the unknown outer companion c may sit
+REFUSED = 1e12  # the cost of a refused orbit
+
 
 def iota_dra_velocities(path: str = "iota_dra_rv.csv") -> pd.DataFrame:
     """Every public velocity of iota Dra, in the units orbitize! reads, written to `path`.
@@ -54,33 +60,38 @@ def iota_dra_velocities(path: str = "iota_dra_rv.csv") -> pd.DataFrame:
     for line in fetch("J/ApJ/646/505/table1.dat").decode().splitlines():
         if line[0:11].strip() == "iota Dra":
             jd, rv, err = float(line[12:26]), float(line[27:34]), float(line[35:40])
-            rows.append((jd - 2400000.5, rv / 1000, err / 1000, "lick"))
+            rows.append((jd - MJD_OFFSET, rv / 1000, err / 1000, "lick"))
     # APF, 2018 to 2021: JD, velocity and error in m/s, whitespace separated.
     for line in fetch("J/AJ/162/211/table1.dat").decode().splitlines():
         p = line.split()
         if len(p) >= 3:
-            rows.append((float(p[0]) - 2400000.5, float(p[1]) / 1000, float(p[2]) / 1000, "apf"))
+            rows.append((float(p[0]) - MJD_OFFSET, float(p[1]) / 1000, float(p[2]) / 1000, "apf"))
     df = pd.DataFrame(rows, columns=["epoch", "rv", "rv_err", "instrument"]).sort_values("epoch")
     df.insert(1, "object", 0)
     df.to_csv(path, index=False, float_format="%.6f")
     return df.reset_index(drop=True)
 
 
+def _plain_value(x):
+    """A FITS cell as a plain Python value where it has one."""
+    return x.item() if hasattr(x, "item") else x
+
+
 def hgca_row(hip: int) -> dict | None:
     """One star's entry in the catalog of accelerations (EDR3 edition), or None if it is not there."""
     from astropy.io import fits
     from orbitize import DATADIR
-    path = os.path.join(DATADIR, "HGCA_vEDR3.fits")
-    if not os.path.exists(path):             # orbitize! fetches the catalog on first use; do the same here
-        import urllib.request
+
+    path = Path(DATADIR) / "HGCA_vEDR3.fits"
+    if not path.exists():  # orbitize! fetches the catalog on first use; do the same here
         print("Downloading the catalog of accelerations (about 22 MB), once...")
-        urllib.request.urlretrieve("https://cdsarc.cds.unistra.fr/ftp/J/ApJS/254/42/HGCA_vEDR3.fits", path)
+        urllib.request.urlretrieve(HGCA_URL, path)
     with fits.open(path, ignore_missing_simple=True) as h:
         d = h[1].data
         r = d[d["hip_id"] == hip]
         if len(r) == 0:
             return None
-        return {name: (r[0][name].item() if hasattr(r[0][name], "item") else r[0][name]) for name in d.columns.names}
+        return {name: _plain_value(r[0][name]) for name in d.columns.names}
 
 
 def pull_sigma(chi2: float, dof: int = 2) -> float:
@@ -90,29 +101,45 @@ def pull_sigma(chi2: float, dof: int = 2) -> float:
     leaves the same chance in both tails of a bell curve.
     """
     from scipy import stats
+
     p = stats.chi2.sf(chi2, dof)
     return float(stats.norm.isf(p / 2))
 
 
+# The three measurements of a star's motion, in time order: (column suffix, label, colour).
+_MOTIONS = (
+    ("hip", "Hipparcos, 1991", "#3b6ea5"),
+    ("hg", "average, 1991 to 2016", "#555"),
+    ("gaia", "Gaia, 2016", "#d1495b"),
+)
+
+
 def plot_proper_motions(row: dict, name: str):
-    """A star's motion across the sky, three ways: Hipparcos (1991), Gaia (2016), and the average
-    over the 25 years between them. If they disagree, something is pulling the star."""
+    """A star's motion across the sky, three ways.
+
+    Hipparcos (1991), Gaia (2016), and the average over the 25 years between them. If they
+    disagree, something is pulling the star.
+    """
     import matplotlib.pyplot as plt
+
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), dpi=110)
-    for ax, comp, label in zip(axes, ("pmra", "pmdec"), ("east-west", "north-south")):
-        vals = [(row[f"{comp}_hip"], row[f"{comp}_hip_error"], "Hipparcos, 1991"),
-                (row[f"{comp}_hg"], row[f"{comp}_hg_error"], "average, 1991 to 2016"),
-                (row[f"{comp}_gaia"], row[f"{comp}_gaia_error"], "Gaia, 2016")]
-        ref = vals[1][0]                      # show differences from the 25-year average
-        for i, (v, e, lab) in enumerate(vals):
-            ax.errorbar([i], [v - ref], yerr=[e], fmt="o", ms=7, capsize=4, color=["#3b6ea5", "#555", "#d1495b"][i])
+    for ax, component, direction in zip(axes, ("pmra", "pmdec"), ("east-west", "north-south"), strict=True):
+        average = row[f"{component}_hg"]  # show differences from the 25-year average
+        for i, (suffix, _, colour) in enumerate(_MOTIONS):
+            value, error = row[f"{component}_{suffix}"], row[f"{component}_{suffix}_error"]
+            ax.errorbar([i], [value - average], yerr=[error], fmt="o", ms=7, capsize=4, color=colour)
         ax.axhline(0, color="#999", lw=0.8, ls="--")
-        ax.set_xticks(range(3), [v[2] for v in vals], fontsize=8.5)
+        ax.set_xticks(range(len(_MOTIONS)), [label for _, label, _ in _MOTIONS], fontsize=8.5)
         ax.set_xlim(-0.5, 2.5)
         ax.set_ylabel("Motion minus the 25-year average (mas per year)")
-        ax.set_title(f"{name}: {label} motion", fontsize=10.5)
-    fig.text(0.01, 0.005, "Data: Brandt 2021, Hipparcos-Gaia Catalog of Accelerations (EDR3), ApJS 254, 42.",
-             fontsize=7, color="#666")
+        ax.set_title(f"{name}: {direction} motion", fontsize=10.5)
+    fig.text(
+        0.01,
+        0.005,
+        "Data: Brandt 2021, Hipparcos-Gaia Catalog of Accelerations (EDR3), ApJS 254, 42.",
+        fontsize=7,
+        color="#666",
+    )
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     return fig
 
@@ -120,10 +147,18 @@ def plot_proper_motions(row: dict, name: str):
 def iota_dra_system(rv_path: str = "iota_dra_rv.csv"):
     """orbitize! system for iota Dra with two companions (b, then c) and velocities only."""
     from orbitize import read_input, system
+
     data = read_input.read_file(rv_path)
     s = IOTA_DRA
-    return system.System(2, data, s["star_mass"], s["parallax"], mass_err=s["star_mass_err"],
-                         plx_err=s["parallax_err"], fit_secondary_mass=True)
+    return system.System(
+        2,
+        data,
+        s["star_mass"],
+        s["parallax"],
+        mass_err=s["star_mass_err"],
+        plx_err=s["parallax_err"],
+        fit_secondary_mass=True,
+    )
 
 
 def b_start(sys_) -> np.ndarray:
@@ -132,13 +167,27 @@ def b_start(sys_) -> np.ndarray:
     Edge on (inclination 90 degrees) means b's fitted mass is its minimum mass.
     """
     from orbitize import basis
-    idx, p = sys_.param_idx, np.zeros(len(sys_.labels))
-    tau_b = basis.tp_to_tau(_B_PERIASTRON_JD - 2400000.5, sys_.tau_ref_epoch, _B_PERIOD_DAYS)
-    start = dict(sma1=1.448, ecc1=0.7008, inc1=np.pi / 2, aop1=_B_OMEGA_STAR + np.pi, pan1=1.0, tau1=tau_b,
-                 inc2=np.pi / 2, pan2=1.0, plx=IOTA_DRA["parallax"], m0=IOTA_DRA["star_mass"],
-                 m1=11.67 * MJUP_IN_MSUN, sigma_apf=0.011, sigma_lick=0.014)
+
+    published = {name: value for name, (value, _, _) in IOTA_DRA_B_PUBLISHED.items()}
+    tau_b = basis.tp_to_tau(_B_PERIASTRON_JD - MJD_OFFSET, sys_.tau_ref_epoch, _B_PERIOD_DAYS)
+    start = {
+        "sma1": published["semi-major axis (AU)"],
+        "ecc1": published["eccentricity"],
+        "inc1": np.pi / 2,
+        "aop1": _B_OMEGA_STAR + np.pi,
+        "pan1": 1.0,
+        "tau1": tau_b,
+        "inc2": np.pi / 2,
+        "pan2": 1.0,
+        "plx": IOTA_DRA["parallax"],
+        "m0": IOTA_DRA["star_mass"],
+        "m1": published["minimum mass (Jupiter masses)"] * MJUP_IN_MSUN,
+        "sigma_apf": 0.011,  # km/s, about the published jitters
+        "sigma_lick": 0.014,
+    }
+    p = np.zeros(len(sys_.labels))
     for k, v in start.items():
-        p[idx[k]] = v
+        p[sys_.param_idx[k]] = v
     return p
 
 
@@ -150,24 +199,31 @@ def best_fit(sys_, start: np.ndarray, free: list[str], x0: list[float]) -> tuple
     """
     from orbitize import sampler
     from scipy.optimize import minimize
+
     idx = sys_.param_idx
-    like = sampler.MCMC(sys_, 1, 50, 1)._logl       # orbitize!'s own log likelihood
+    log_likelihood = sampler.MCMC(sys_, 1, 50, 1)._logl  # orbitize!'s own log likelihood
 
     def place(x):
         q = start.copy()
-        for k, v in zip(free, x):
+        for k, v in zip(free, x, strict=True):
             q[idx[k]] = v
         return q
 
+    def possible(q) -> bool:
+        return bool(
+            0 <= q[idx["ecc1"]] < MAX_ECCENTRICITY
+            and 0 <= q[idx["ecc2"]] < MAX_ECCENTRICITY
+            and q[idx["m1"]] > 0
+            and q[idx["m2"]] > 0
+            and OUTER_SMA_RANGE[0] < q[idx["sma2"]] < OUTER_SMA_RANGE[1]
+        )
+
     def cost(x):
         q = place(x)
-        if not (0 <= q[idx["ecc1"]] < 0.95 and 0 <= q[idx["ecc2"]] < 0.95 and q[idx["m1"]] > 0
-                and q[idx["m2"]] > 0 and 3 < q[idx["sma2"]] < 100):
-            return 1e12
-        return -float(like(q))
+        return -float(log_likelihood(q)) if possible(q) else REFUSED
 
-    r = minimize(cost, x0, method="Nelder-Mead",
-                 options=dict(maxiter=20000, xatol=1e-8, fatol=1e-5, adaptive=True))
+    options = {"maxiter": 20000, "xatol": 1e-8, "fatol": 1e-5, "adaptive": True}
+    r = minimize(cost, x0, method="Nelder-Mead", options=options)
     return -float(r.fun), place(r.x)
 
 

@@ -1,4 +1,4 @@
-"""Fetch and parse the three public data releases the notebooks use.
+"""Fetch and parse the public data releases the notebooks use.
 
 Every file comes from the CDS archive (VizieR) the first time it is needed and is cached in
 `data/` next to the notebook. A file whose checksum does not match the one recorded here still
@@ -7,7 +7,12 @@ loads, with one warning line: the archive may have reissued it.
     Habitable zone catalog    Hill et al. 2023, AJ 165, 34            VizieR J/AJ/165/34
     Activity cycles           Isaacson et al. 2024, ApJS 274, 35      VizieR J/ApJS/274/35
     TESS-Keck Survey release  Polanski et al. 2024, ApJS 272, 32      VizieR J/ApJS/272/32
+    iota Dra, APF velocities  Hill et al. 2021, AJ 162, 211           VizieR J/AJ/162/211
+    iota Dra, Lick velocities Butler et al. 2006, ApJ 646, 505        VizieR J/ApJ/646/505
+
+Star properties come from the NASA Exoplanet Archive, with `planets.csv` as the offline copy.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -16,12 +21,18 @@ import io
 import os
 import urllib.parse
 import urllib.request
+from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-CDS = ["https://cdsarc.cds.unistra.fr/ftp/"]
+from .constants import BTJD
+
+CDS = ("https://cdsarc.cds.unistra.fr/ftp/",)  # copies of the archive, tried in turn
+ARCHIVE_TAP = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?"
 CACHE = os.environ.get("HABTRAIN_DATA", "data")
+PLANETS_CSV = Path(__file__).with_name("planets.csv")
 
 # Checksums of the files as fetched on 2026-10-25 (gzipped files: of the unzipped bytes).
 SHA256 = {
@@ -31,51 +42,105 @@ SHA256 = {
     "J/ApJS/274/35/table4.dat": "6976ae9dd0dda35d0afe0237c515c6a15465ef869978ffae86c2c86ef3f1fdf5",
     "J/ApJS/272/32/tksxxrvs.dat": "d4cc7a7c3ee23030ce7a84f4226cf29b6601ee0e2171b7b37adf3d9f62362273",
     "J/ApJS/272/32/table6.dat": "ad9fd91d095887dbdc3dfe025c0320beb2264084baa0dedf71fadddfb8e67e26",
+    "J/AJ/162/211/table1.dat": "df2ae92f0ed6c442aa2e28c32420ba7fc69b21d2fe98291ba690b41d02591e18",
+    "J/ApJ/646/505/table1.dat": "4ccf041207e4490e10ad8c0c85ab81b4c4aae55c420f63041dea36d43e2a65d6",
 }
 
-
-
-SUN_TEFF = 5772        # K
+SUN_TEFF = 5772  # K
 EARTH_INSOLATION = 1361  # W/m2
+SUN_IN_EARTH_RADII = 109.08
+
+JD_2000 = 2451544.5  # 2000 January 1, 0h UT
+JD_2005 = 2453371.5  # 2005 January 1, 0h UT
+ACTIVITY_JD_OFFSET = 2440000.0  # the activity table stores BJD minus this
+
+# How far apart two stars are on the star map: 0.1 in colour counts as much as 0.05 in activity.
+COLOUR_SCALE = 0.1
+ACTIVITY_SCALE = 0.05
+
+
+def _cache_path(path: str) -> Path:
+    return Path(CACHE) / path.replace("/", "_").removesuffix(".gz")
+
+
+def _download(path: str) -> bytes:
+    """The bytes of one archive file, from the first copy of the archive that answers."""
+    error = None
+    for base in CDS:
+        try:
+            with urllib.request.urlopen(base + path, timeout=60) as response:  # noqa: S310 - a fixed https URL
+                return response.read()
+        except Exception as exc:  # noqa: BLE001 - try the next copy; report the last failure
+            error = exc
+    msg = f"Could not download {path} from the CDS archive ({error}). Check your connection and run the cell again."
+    raise RuntimeError(msg)
 
 
 def fetch(path: str) -> bytes:
     """The bytes of one archive file (gzip already unpacked), from the cache or the archive."""
-    local = os.path.join(CACHE, path.replace("/", "_").removesuffix(".gz"))
-    if os.path.exists(local):
-        with open(local, "rb") as fh:
-            return fh.read()
-    raw, last = None, None
-    for base in CDS:
-        try:
-            with urllib.request.urlopen(base + path, timeout=60) as r:
-                raw = r.read()
-            break
-        except Exception as exc:  # keep the error to report it
-            last = exc
-    if raw is None:
-        raise RuntimeError(f"Could not download {path} from the CDS archive ({last}). "
-                           "Check your connection and run the cell again.")
+    local = _cache_path(path)
+    if local.exists():
+        return local.read_bytes()
+    raw = _download(path)
     if path.endswith(".gz"):
         raw = gzip.decompress(raw)
-    want = SHA256.get(path)
-    if want and hashlib.sha256(raw).hexdigest() != want:
+    expected = SHA256.get(path)
+    if expected and hashlib.sha256(raw).hexdigest() != expected:
         print(f"Note: {path} differs from the copy this notebook was written against. It still loads.")
-    os.makedirs(CACHE, exist_ok=True)
-    with open(local, "wb") as fh:
-        fh.write(raw)
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_bytes(raw)
     return raw
 
 
-def _num(s: str):
-    s = s.strip()
+def _lines(path: str) -> list[str]:
+    return fetch(path).decode("latin-1").splitlines()
+
+
+def _num(s: str) -> float:
+    """A number from a table cell, or nan when the cell is blank or not a number."""
     try:
-        return float(s)
+        return float(s.strip())
     except ValueError:
         return np.nan
 
 
+def _text(s: str) -> str:
+    return s.strip()
+
+
+def _flag(s: str) -> int:
+    return 1 if s.strip() == "1" else 0
+
+
+def _read_fixed_width(line: str, layout: dict) -> dict:
+    """One row of a fixed-width table: layout maps each column name to (start, end, parser)."""
+    return {name: parse(line[start:end]) for name, (start, end, parse) in layout.items()}
+
+
 # ---------------------------------------------------------------- habitable zone catalog
+
+# Byte ranges of the catalog's columns (CDS ReadMe for J/AJ/165/34), in the order the table shows them.
+CATALOG_LAYOUT = {
+    "Planet": (0, 18, _text),
+    "Mass": (24, 31, _num),
+    "f_Mass": (49, 50, _flag),
+    "l_Mass": (21, 23, _text),
+    "Rad": (51, 56, _num),
+    "f_Rad": (71, 72, _flag),
+    "Per": (73, 81, _num),
+    "a": (82, 93, _num),
+    "e": (94, 101, _num),
+    "S": (102, 108, _num),
+    "CHZ": (135, 138, _num),
+    "OHZ": (139, 142, _num),
+    "TSM": (143, 148, _num),
+    "K": (149, 154, _num),
+    "Mstar": (155, 159, _num),
+    "Rstar": (160, 165, _num),
+    "Teff": (166, 170, _num),
+    "Vmag": (190, 196, _num),
+}
+
 
 def load_catalog() -> pd.DataFrame:
     """Every known planet that spends time in its star's habitable zone (328 rows).
@@ -83,22 +148,7 @@ def load_catalog() -> pd.DataFrame:
     f_Mass and f_Rad are 1 where the value was estimated from a mass-radius relation
     (Chen and Kipping 2017) rather than measured. l_Mass is "<=" or ">=" where the mass is only a limit.
     """
-    text = fetch("J/AJ/165/34/table1.dat").decode("latin-1")
-    rows = []
-    for line in text.splitlines():
-        L = line.ljust(196)
-        rows.append({
-            "Planet": L[0:18].strip(),
-            "Mass": _num(L[24:31]), "f_Mass": 1 if L[49:50].strip() == "1" else 0,
-            "l_Mass": L[21:23].strip(),           # "<=" or ">=" when the mass is only a limit
-            "Rad": _num(L[51:56]), "f_Rad": 1 if L[71:72].strip() == "1" else 0,
-            "Per": _num(L[73:81]), "a": _num(L[82:93]), "e": _num(L[94:101]),
-            "S": _num(L[102:108]),
-            "CHZ": _num(L[135:138]), "OHZ": _num(L[139:142]),
-            "TSM": _num(L[143:148]), "K": _num(L[149:154]),
-            "Mstar": _num(L[155:159]), "Rstar": _num(L[160:165]), "Teff": _num(L[166:170]),
-            "Vmag": _num(L[190:196]),
-        })
+    rows = [_read_fixed_width(line, CATALOG_LAYOUT) for line in _lines("J/AJ/165/34/table1.dat")]
     return pd.DataFrame(rows)
 
 
@@ -109,15 +159,27 @@ def small_hz_planets(cat: pd.DataFrame) -> pd.DataFrame:
 
 # ---------------------------------------------------------------- activity cycles
 
+ACTIVITY_SERIES_LAYOUT = {"Name": (0, 12, _text), "BJD": (24, 33, _num), "S": (34, 41, _num)}
+
+ACTIVITY_SUMMARY_LAYOUT = {
+    "Name": (0, 12, _text),
+    "Smed": (28, 34, _num),
+    "SSD": (35, 42, _num),
+    "Nobs": (43, 47, _num),
+    "BV": (48, 53, _num),
+    "logRhk": (54, 60, _num),
+}
+
+
 def load_activity_series() -> pd.DataFrame:
-    """52,372 S-value measurements of 710 stars (Keck HIRES, 2005 to 2023; the file starts in late 2004). Columns: Name, BJD, S."""
-    text = fetch("J/ApJS/274/35/table3.dat.gz").decode("latin-1")
-    names, bjd, s = [], [], []
-    for line in text.splitlines():
-        names.append(line[0:12].strip())
-        bjd.append(_num(line[24:33]) + 2440000.0)
-        s.append(_num(line[34:41]))
-    return pd.DataFrame({"Name": names, "BJD": bjd, "S": s})
+    """52,372 S-value measurements of 710 stars (Keck HIRES, 2005 to 2023; the file starts in late 2004).
+
+    Columns: Name, BJD, S.
+    """
+    rows = [_read_fixed_width(line, ACTIVITY_SERIES_LAYOUT) for line in _lines("J/ApJS/274/35/table3.dat.gz")]
+    df = pd.DataFrame(rows, columns=list(ACTIVITY_SERIES_LAYOUT))
+    df["BJD"] += ACTIVITY_JD_OFFSET
+    return df
 
 
 def load_activity_summary() -> pd.DataFrame:
@@ -127,12 +189,7 @@ def load_activity_summary() -> pd.DataFrame:
     is redder and cooler), logRhk (activity scaled so stars of different colours compare),
     variation (SSD as a percentage of Smed).
     """
-    text = fetch("J/ApJS/274/35/table2.dat").decode("latin-1")
-    rows = []
-    for L in text.splitlines():
-        L = L.ljust(66)
-        rows.append({"Name": L[0:12].strip(), "Smed": _num(L[28:34]), "SSD": _num(L[35:42]),
-                     "Nobs": _num(L[43:47]), "BV": _num(L[48:53]), "logRhk": _num(L[54:60])})
+    rows = [_read_fixed_width(line, ACTIVITY_SUMMARY_LAYOUT) for line in _lines("J/ApJS/274/35/table2.dat")]
     df = pd.DataFrame(rows)
     df["variation"] = 100 * df.SSD / df.Smed
     return df
@@ -140,43 +197,72 @@ def load_activity_summary() -> pd.DataFrame:
 
 def nearest_stars(summary: pd.DataFrame, bv: float, logrhk: float, n: int = 5) -> pd.DataFrame:
     """The n stars closest to a spot on the star map (colour bv, activity logrhk)."""
-    d = np.hypot((summary.BV - bv) / 0.1, (summary.logRhk - logrhk) / 0.05)
-    return summary.assign(distance=d).nsmallest(n, "distance").drop(columns="distance")
+    distance = np.hypot((summary.BV - bv) / COLOUR_SCALE, (summary.logRhk - logrhk) / ACTIVITY_SCALE)
+    return summary.assign(distance=distance).nsmallest(n, "distance").drop(columns="distance")
 
 
 def well_sampled_stars(series: pd.DataFrame, min_obs: int = 45) -> list[str]:
     """Stars with at least `min_obs` observations since 2005: the survey's own cut (285 stars)."""
-    since = series[series.BJD >= 2453371.5]
-    counts = since.groupby("Name").size()
+    counts = series[series.BJD >= JD_2005].groupby("Name").size()
     return sorted(counts[counts >= min_obs].index)
 
 
 def nightly(series: pd.DataFrame, name: str) -> pd.DataFrame:
     """One star's S-values averaged per night, with time in years. Columns: year, S, n."""
     one = series[series.Name == name]
-    night = np.floor(one.BJD.values + 0.5)
-    g = pd.DataFrame({"night": night, "BJD": one.BJD.values, "S": one.S.values}).groupby("night")
-    out = pd.DataFrame({"BJD": g.BJD.mean(), "S": g.S.mean(), "n": g.size()}).reset_index(drop=True)
-    out["year"] = 2000.0 + (out.BJD - 2451544.5) / 365.25
+    night = np.floor(one.BJD.to_numpy() + 0.5)  # Julian days start at noon, so this numbers the nights
+    by_night = pd.DataFrame({"night": night, "BJD": one.BJD.to_numpy(), "S": one.S.to_numpy()}).groupby("night")
+    out = pd.DataFrame({"BJD": by_night.BJD.mean(), "S": by_night.S.mean(), "n": by_night.size()})
+    out = out.reset_index(drop=True)
+    out["year"] = 2000.0 + (out.BJD - JD_2000) / 365.25
     return out[["year", "S", "n"]]
 
 
 # ---------------------------------------------------------------- TESS-Keck Survey release
 
-def load_rvs() -> pd.DataFrame:
-    """All 9,204 TESS-Keck Survey measurements, 9,000 of them with a velocity. Columns: TKS, BJD, RV, eRV, SHK, Inst.
+RV_LAYOUT = {
+    "TKS": (0, 12, _text),
+    "BJD": (46, 62, _num),
+    "RV": (63, 86, _num),
+    "eRV": (87, 106, _num),
+    "SHK": (107, 123, _num),
+    "Inst": (131, 136, _text),
+}
 
-    Rows with no velocity (an activity value only) are dropped.
+# Positions of the columns used from the survey's fitted table (pipe-separated, J/ApJS/272/32 table6).
+# A row with no planet letter describes the whole system (its long-term trends).
+TABLE6_COLUMNS = {
+    "toi": 0,
+    "letter": 1,
+    "tks": 2,
+    "period": 3,
+    "t0": 5,
+    "K": 7,
+    "K_err": 8,
+    "eccentricity": 9,  # "~" when the orbit was fitted as circular
+    "linear_trend": 16,
+    "curved_trend": 19,
+}
+
+
+def load_rvs() -> pd.DataFrame:
+    """All 9,204 TESS-Keck Survey measurements, 9,000 of them with a velocity.
+
+    Columns: TKS, BJD, RV, eRV, SHK, Inst. Rows with no velocity (an activity value only) are dropped.
     """
-    text = fetch("J/ApJS/272/32/tksxxrvs.dat").decode("latin-1")
+    rows = [_read_fixed_width(line, RV_LAYOUT) for line in _lines("J/ApJS/272/32/tksxxrvs.dat")]
+    return pd.DataFrame([row for row in rows if not np.isnan(row["RV"])])
+
+
+def _table6() -> list[dict]:
+    """The rows of the survey's fitted table, each cell stripped, keyed by TABLE6_COLUMNS."""
     rows = []
-    for line in text.splitlines():
-        rv = _num(line[63:86])
-        if np.isnan(rv):
-            continue
-        rows.append({"TKS": line[0:12].strip(), "BJD": _num(line[46:62]), "RV": rv,
-                     "eRV": _num(line[87:106]), "SHK": _num(line[107:123]), "Inst": line[131:136].strip()})
-    return pd.DataFrame(rows)
+    for line in _lines("J/ApJS/272/32/table6.dat"):
+        cells = line.split("|")
+        row = {name: cells[i].strip() if i < len(cells) else "" for name, i in TABLE6_COLUMNS.items()}
+        row["toi"] = row["toi"].replace("TOI", "").strip()
+        rows.append(row)
+    return rows
 
 
 def _nonzero(x: str) -> bool:
@@ -184,8 +270,9 @@ def _nonzero(x: str) -> bool:
     return not np.isnan(v) and v != 0.0
 
 
-def _table6() -> list[list[str]]:
-    return [L.rstrip("\n").split("|") for L in fetch("J/ApJS/272/32/table6.dat").decode("latin-1").splitlines()]
+def _has_trend(system_row: dict | None) -> bool:
+    """True when the system was fitted with a linear or curved long-term trend."""
+    return system_row is not None and (_nonzero(system_row["linear_trend"]) or _nonzero(system_row["curved_trend"]))
 
 
 def orbit(planet: str) -> dict:
@@ -195,10 +282,16 @@ def orbit(planet: str) -> dict:
     published wobble and mass are deliberately not returned: they are the answer key.
     """
     toi, letter = planet.replace("TOI-", "").split()
-    for c in _table6():
-        if c[0].replace("TOI", "").strip() == toi and c[1].strip() == letter:
-            return {"planet": planet, "TKS": c[2].strip(), "P": float(c[3]), "T0": float(c[5]) + 2457000.0}
-    raise KeyError(f"{planet} is not in the TESS-Keck Survey fitted table.")
+    for row in _table6():
+        if row["toi"] == toi and row["letter"] == letter:
+            return {"planet": planet, "TKS": row["tks"], "P": float(row["period"]), "T0": float(row["t0"]) + BTJD}
+    msg = f"{planet} is not in the TESS-Keck Survey fitted table."
+    raise KeyError(msg)
+
+
+def _telescope_counts(instruments: pd.Series) -> str:
+    """How many velocities each telescope took, such as "HIRES 37 + APF 12"."""
+    return " + ".join(f"{name} {count}" for name, count in instruments.value_counts().items())
 
 
 def single_planet_systems() -> pd.DataFrame:
@@ -207,62 +300,32 @@ def single_planet_systems() -> pd.DataFrame:
     The systems you can fit with the simple model in notebook 4, with how many velocities each has.
     Sorted with the clearest signals first. Holds no published wobble or mass.
     """
-    rows, sysrow, count = [], {}, {}
-    t6 = _table6()
-    for c in t6:
-        if not c[1].strip():
-            sysrow[c[2].strip()] = c
-    for c in t6:
-        if c[1].strip():
-            count[c[2].strip()] = count.get(c[2].strip(), 0) + 1
+    rows = _table6()
+    system_rows = {row["tks"]: row for row in rows if not row["letter"]}
+    planet_rows = [row for row in rows if row["letter"]]
+    planets_per_star = Counter(row["tks"] for row in planet_rows)
     rvs = load_rvs()
-    n = rvs.groupby("TKS").size()
-    inst = rvs.groupby("TKS").Inst.agg(lambda s: " + ".join(f"{k} {v}" for k, v in s.value_counts().items()))
-    for c in t6:
-        tks = c[2].strip()
-        if not c[1].strip() or count[tks] != 1 or c[9].strip() != "~":
+    velocities = rvs.groupby("TKS").size()
+    telescopes = rvs.groupby("TKS").Inst.agg(_telescope_counts)
+    chosen = []
+    for row in planet_rows:
+        tks = row["tks"]
+        if planets_per_star[tks] != 1 or row["eccentricity"] != "~" or _has_trend(system_rows.get(tks)):
             continue
-        s = sysrow.get(tks)
-        if s and (_nonzero(s[16]) or _nonzero(s[19])):   # a linear or curved long-term trend
-            continue
-        k, ek = _num(c[7]), _num(c[8])
-        rows.append({"planet": f"TOI-{c[0].replace('TOI', '').strip()} {c[1].strip()}", "TKS": tks,
-                     "P_days": float(c[3]), "velocities": int(n.get(tks, 0)), "telescopes": inst.get(tks, ""),
-                     "_strength": k / ek if ek else 0.0})
-    df = pd.DataFrame(rows).sort_values("_strength", ascending=False).drop(columns="_strength")
+        k, k_err = _num(row["K"]), _num(row["K_err"])
+        chosen.append({
+            "planet": f"TOI-{row['toi']} {row['letter']}",
+            "TKS": tks,
+            "P_days": float(row["period"]),
+            "velocities": int(velocities.get(tks, 0)),
+            "telescopes": telescopes.get(tks, ""),
+            "_strength": k / k_err if k_err else 0.0,
+        })
+    df = pd.DataFrame(chosen).sort_values("_strength", ascending=False).drop(columns="_strength")
     return df.reset_index(drop=True)
 
 
-SUN_IN_EARTH_RADII = 109.08
-
-
-def _from_table(planet: str, column: str) -> float:
-    """One value for a planet from the package's own table (planets.csv), or nan if it is not there."""
-    t = planets()
-    row = t[t.planet == planet]
-    return float(row[column].iloc[0]) if len(row) and pd.notna(row[column].iloc[0]) else float("nan")
-
-
-def star_radius(planet: str) -> float:
-    """The host star's radius in solar radii (NASA Exoplanet Archive; fallback: planets.csv)."""
-    q = f"select st_rad from pscomppars where pl_name='{planet}'"
-    url = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?" + urllib.parse.urlencode({"query": q, "format": "csv"})
-    try:
-        with urllib.request.urlopen(url, timeout=30) as r:
-            return float(r.read().decode().strip().splitlines()[1])
-    except Exception:
-        return _from_table(planet, "st_rad")
-
-
-def transit_duration(planet: str) -> float:
-    """How long the planet's transit lasts, in hours (NASA Exoplanet Archive; fallback: planets.csv)."""
-    q = f"select pl_trandur from pscomppars where pl_name='{planet}'"
-    url = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?" + urllib.parse.urlencode({"query": q, "format": "csv"})
-    try:
-        with urllib.request.urlopen(url, timeout=30) as r:
-            return float(r.read().decode().strip().splitlines()[1])
-    except Exception:
-        return _from_table(planet, "pl_trandur")
+# ---------------------------------------------------------------- NASA Exoplanet Archive
 
 
 def planets() -> pd.DataFrame:
@@ -272,8 +335,55 @@ def planets() -> pd.DataFrame:
     release, joined with star properties from the NASA Exoplanet Archive (read 2026-10-25). Holds no
     published radius, wobble or mass: those are what you measure.
     """
-    here = os.path.dirname(__file__)
-    return pd.read_csv(os.path.join(here, "planets.csv"))
+    return pd.read_csv(PLANETS_CSV)
+
+
+def _from_table(planet: str, column: str) -> float:
+    """One value for a planet from the package's own table (planets.csv), or nan if it is not there."""
+    t = planets()
+    row = t[t.planet == planet]
+    return float(row[column].iloc[0]) if len(row) and pd.notna(row[column].iloc[0]) else float("nan")
+
+
+def _archive_csv(columns: str, planet: str) -> str:
+    """The NASA Exoplanet Archive's answer, as CSV text, for some columns of one planet's row."""
+    name = planet.replace("'", "''")  # quote the name the way ADQL quotes strings
+    query = f"select {columns} from pscomppars where pl_name='{name}'"  # noqa: S608 - a read-only public archive
+    url = ARCHIVE_TAP + urllib.parse.urlencode({"query": query, "format": "csv"})
+    with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310 - a fixed https URL
+        return response.read().decode()
+
+
+def _archive_value(planet: str, column: str) -> float:
+    """One number for a planet from the archive, or from planets.csv when the archive cannot give it."""
+    try:
+        return float(_archive_csv(column, planet).strip().splitlines()[1])
+    except Exception:  # noqa: BLE001 - offline, slow or not listed: use the bundled copy instead
+        return _from_table(planet, column)
+
+
+def star_radius(planet: str) -> float:
+    """The host star's radius in solar radii (NASA Exoplanet Archive; fallback: planets.csv)."""
+    return _archive_value(planet, "st_rad")
+
+
+def transit_duration(planet: str) -> float:
+    """How long the planet's transit lasts, in hours (NASA Exoplanet Archive; fallback: planets.csv)."""
+    return _archive_value(planet, "pl_trandur")
+
+
+def star_mass(planet: str) -> float:
+    """The host star's mass in solar masses, from the NASA Exoplanet Archive (fallback: planets.csv)."""
+    mass = _archive_value(planet, "st_mass")
+    if np.isnan(mass):
+        msg = f"Could not reach the NASA Exoplanet Archive for {planet}'s star mass."
+        raise RuntimeError(msg)
+    return mass
+
+
+def _symmetric(err_plus: float, err_minus: float) -> float:
+    """One uncertainty from an upper and a lower one: the average of their sizes."""
+    return float((abs(err_plus) + abs(err_minus)) / 2)
 
 
 def star(planet: str) -> dict:
@@ -281,30 +391,19 @@ def star(planet: str) -> dict:
 
     Returns {"tic", "ra", "dec", "mass": (value, uncertainty), "radius": (value, uncertainty)} in solar units.
     """
-    q = ("select tic_id,ra,dec,st_mass,st_masserr1,st_masserr2,st_rad,st_raderr1,st_raderr2 "
-         f"from pscomppars where pl_name='{planet}'")
-    url = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?" + urllib.parse.urlencode({"query": q, "format": "csv"})
+    columns = "tic_id,ra,dec,st_mass,st_masserr1,st_masserr2,st_rad,st_raderr1,st_raderr2"
     try:
-        with urllib.request.urlopen(url, timeout=30) as r:
-            row = pd.read_csv(io.StringIO(r.read().decode())).iloc[0]
-    except Exception as exc:
-        raise RuntimeError(f"Could not reach the NASA Exoplanet Archive for {planet}'s star ({exc}). "
-                           "Wait a minute and run the cell again.") from None
-    tic = int(str(row.tic_id).replace("TIC", "").strip())
-    return {"tic": tic, "ra": float(row.ra), "dec": float(row.dec),
-            "mass": (float(row.st_mass), float((abs(row.st_masserr1) + abs(row.st_masserr2)) / 2)),
-            "radius": (float(row.st_rad), float((abs(row.st_raderr1) + abs(row.st_raderr2)) / 2))}
-
-
-def star_mass(planet: str) -> float:
-    """The host star's mass in solar masses, from the NASA Exoplanet Archive (fallback: planets.csv)."""
-    q = f"select st_mass from pscomppars where pl_name='{planet}'"
-    url = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?" + urllib.parse.urlencode({"query": q, "format": "csv"})
-    try:
-        with urllib.request.urlopen(url, timeout=30) as r:
-            return float(r.read().decode().strip().splitlines()[1])
-    except Exception:
-        mass = _from_table(planet, "st_mass")
-        if not np.isnan(mass):
-            return mass
-        raise RuntimeError(f"Could not reach the NASA Exoplanet Archive for {planet}'s star mass.")
+        row = pd.read_csv(io.StringIO(_archive_csv(columns, planet))).iloc[0]
+    except Exception as exc:  # noqa: BLE001 - any failure gets the same plain message
+        msg = (
+            f"Could not reach the NASA Exoplanet Archive for {planet}'s star ({exc}). "
+            "Wait a minute and run the cell again."
+        )
+        raise RuntimeError(msg) from None
+    return {
+        "tic": int(str(row.tic_id).replace("TIC", "").strip()),
+        "ra": float(row.ra),
+        "dec": float(row.dec),
+        "mass": (float(row.st_mass), _symmetric(row.st_masserr1, row.st_masserr2)),
+        "radius": (float(row.st_rad), _symmetric(row.st_raderr1, row.st_raderr2)),
+    }

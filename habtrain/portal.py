@@ -26,55 +26,76 @@ Modes (environment variable RAKIURA_LIVE):
     "1"    live; signs in with one click if needed (prints a link)
     "0"    offline, always (even for sign_in=True)
 """
+
 from __future__ import annotations
 
-import datetime as _dt
+import contextlib
+import datetime as dt
 import json
 import os
 import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 DEFAULT_REPO = "Rakiura-Inc/limits-of-habitability"
 _PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
 MAX_NUMBERS = 20
+MAX_TEXT = 200  # characters kept of a text value sent with a tick
+_HELPER_CALLS = ("start", "done", "stage_text", "submit")
+STEPS_FILE = "rakiura_steps.json"
+
+NOT_CONNECTED = "Not connected to Rakiura. Your work stays on this computer."
+
+# What a member reads when a part is ticked. The part name itself stays internal (the portal keys on it).
+_SAVED = {"picked": "Part 1 saved", "weighed": "Part 2 saved", "found": "Hand-in saved", "fitted": "Hand-in saved"}
 
 
+def _absolute(path: str) -> str:
+    """The path made absolute without following links, so it reads as the member typed it."""
+    return os.path.abspath(path)  # noqa: PTH100 - Path.resolve() would follow links
+
+
+def _default_handin_dir() -> str:
+    return _absolute(os.environ.get("HABTRAIN_HANDIN", "handin"))
+
+
+@dataclass
 class _State:
-    helper = None          # the real `rakiura` module when live
-    mode = "offline"
+    """This notebook session's connection: the helper when live, and the offline log."""
+
+    helper: Any = None  # the real `rakiura` module when live
+    mode: str = "offline"
     notebook: str | None = None
-    handin_dir = os.path.abspath(os.environ.get("HABTRAIN_HANDIN", "handin"))
-    log: list = []
+    handin_dir: str = field(default_factory=_default_handin_dir)
+    log: list = field(default_factory=list)
     last_part: str | None = None
 
 
 state = _State()
 
 
-_HELPER_CALLS = ("start", "done", "stage_text", "submit")
-
-
 def _import_helper():
     """The Rakiura helper when it is installed, else None (any other package named rakiura is ignored)."""
     try:
-        import rakiura  # type: ignore
-    except Exception:
+        import rakiura
+    except Exception:  # noqa: BLE001 - a broken or missing helper only means offline mode
         return None
     return rakiura if all(callable(getattr(rakiura, name, None)) for name in _HELPER_CALLS) else None
 
 
 def _key_without_click(helper) -> bool:
+    """True when the helper can sign in with no click: a key in the environment, Colab's Secrets, or saved."""
     if os.environ.get("RAKIURA_KEY"):
         return True
-    try:
+    with contextlib.suppress(Exception):  # the helper's private calls may change; then skip that check
         if helper._colab_secret():
             return True
-    except Exception:
-        pass
     try:
         path = helper._credentials_path()
-    except Exception:
-        path = os.path.join(os.path.expanduser("~"), ".config", "rakiura", "credentials")
-    return os.path.exists(path)
+    except Exception:  # noqa: BLE001 - fall back to where the helper keeps the key by default
+        path = Path.home() / ".config" / "rakiura" / "credentials"
+    return Path(path).exists()
 
 
 def steps(notebook: str | None = None) -> dict:
@@ -83,28 +104,26 @@ def steps(notebook: str | None = None) -> dict:
     Returns {"project": ..., "step": ...} for one notebook (by file name), or the whole file.
     $RAKIURA_STEP overrides the step for the current notebook.
     """
-    cands = [os.environ.get("HABTRAIN_STEPS"), "rakiura_steps.json",
-             os.path.join("notebooks", "rakiura_steps.json"),
-             os.path.join(os.path.dirname(__file__), "..", "notebooks", "rakiura_steps.json")]
+    candidates = [
+        os.environ.get("HABTRAIN_STEPS"),
+        STEPS_FILE,
+        str(Path("notebooks") / STEPS_FILE),
+        str(Path(__file__).parent / ".." / "notebooks" / STEPS_FILE),
+    ]
     conf: dict = {}
-    for c in filter(None, cands):
-        if os.path.exists(c):
-            with open(c) as fh:
-                conf = json.load(fh)
+    for candidate in filter(None, candidates):
+        if Path(candidate).exists():
+            conf = json.loads(Path(candidate).read_text())
             break
     if notebook is None:
         return conf
-    entry = dict(conf.get("notebooks", {}).get(os.path.basename(notebook), {}))
+    entry = dict(conf.get("notebooks", {}).get(Path(notebook).name, {}))
     if os.environ.get("RAKIURA_STEP"):
         entry["step"] = os.environ["RAKIURA_STEP"]
     return entry
 
 
-NOT_CONNECTED = "Not connected to Rakiura. Your work stays on this computer."
-
-
-def connect(notebook: str, repo: str = DEFAULT_REPO, handin_dir: str | None = None,
-            sign_in: bool = False) -> str:
+def connect(notebook: str, repo: str = DEFAULT_REPO, handin_dir: str | None = None, sign_in: bool = False) -> str:
     """Start this notebook's session. Returns "live" or "offline". Never raises.
 
     By default it connects only when that needs no click (see the module notes), so the setup cell
@@ -113,31 +132,37 @@ def connect(notebook: str, repo: str = DEFAULT_REPO, handin_dir: str | None = No
     """
     try:
         return _connect(notebook, repo, handin_dir, sign_in)
-    except Exception:  # never stop a notebook over the connection
+    except Exception:  # noqa: BLE001 - never stop a notebook over the connection
         state.helper, state.mode = None, "offline"
         print(NOT_CONNECTED)
         return "offline"
 
 
+def _start_live(helper, notebook: str, repo: str, loud: bool) -> bool:
+    """Open a live run with the helper. Quiet unless a sign-in link may be needed."""
+    try:
+        if helper.start(notebook=notebook, repo=repo, quiet=not loud):
+            state.helper, state.mode = helper, "live"
+            name = _member_name(helper)
+            print(f"Connected to Rakiura as {name}." if name else "Connected to Rakiura.")
+            return True
+    except Exception:  # noqa: BLE001 - a failed start leaves the notebook offline
+        return False
+    finally:
+        _speak(helper)
+    return False
+
+
 def _connect(notebook, repo, handin_dir, sign_in):
     state.notebook = notebook
     if handin_dir:
-        state.handin_dir = os.path.abspath(handin_dir)
-    os.makedirs(state.handin_dir, exist_ok=True)
+        state.handin_dir = _absolute(handin_dir)
+    Path(state.handin_dir).mkdir(parents=True, exist_ok=True)
     flag = os.environ.get("RAKIURA_LIVE")
     helper = None if flag == "0" else _import_helper()
-    if helper is not None and (sign_in or flag == "1" or _key_without_click(helper)):
-        try:
-            # Quiet unless a sign-in link may be needed: the member reads one plain line below.
-            if helper.start(notebook=notebook, repo=repo, quiet=not (sign_in or flag == "1")):
-                state.helper, state.mode = helper, "live"
-                name = _member_name(helper)
-                print(f"Connected to Rakiura as {name}." if name else "Connected to Rakiura.")
-                return "live"
-        except Exception:
-            pass
-        finally:
-            _speak(helper)
+    loud = sign_in or flag == "1"
+    if helper is not None and (loud or _key_without_click(helper)) and _start_live(helper, notebook, repo, loud):
+        return "live"
     state.helper, state.mode = None, "offline"
     if sign_in and helper is None and flag != "0":
         print(NOT_CONNECTED + " The Rakiura helper is not installed: run the setup cell above, then this cell again.")
@@ -150,10 +175,8 @@ def _connect(notebook, repo, handin_dir, sign_in):
 
 def _speak(helper) -> None:
     """Let the helper print its own lines again (ticks, staged files) after a quiet start."""
-    try:
+    with contextlib.suppress(Exception):  # an older helper has no session to unmute
         helper._session.quiet = False
-    except Exception:
-        pass
 
 
 def _member_name(helper) -> str | None:
@@ -163,7 +186,7 @@ def _member_name(helper) -> str | None:
         info = helper.me(show=False) or {}
         name = (info.get("member") or {}).get("name")
         return name if isinstance(name, str) and name.strip() else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - the greeting is optional
         return None
     finally:
         _speak(helper)
@@ -174,27 +197,27 @@ def go_live(notebook: str | None = None, repo: str = DEFAULT_REPO) -> str:
     return connect(notebook or state.notebook or "notebook.ipynb", repo, sign_in=True)
 
 
-def _log_path() -> str:
-    return os.path.join(state.handin_dir, "rakiura_progress.json")
+def _log_path() -> Path:
+    return Path(state.handin_dir) / "rakiura_progress.json"
 
 
-def _clean_numbers(numbers: dict | None):
+def _clean_numbers(numbers: dict | None) -> dict | None:
+    """The numbers as plain named values, or None when one is not a single value or there are too many."""
     clean = {}
     for name, value in (numbers or {}).items():
-        value = value.item() if hasattr(value, "item") else value
-        if value is None:
-            value = "blank"
-        if not isinstance(value, (bool, int, float, str)):
+        plain = value.item() if hasattr(value, "item") else value
+        if plain is None:
+            plain = "blank"
+        if not isinstance(plain, (bool, int, float, str)):
             return None
-        clean[str(name)] = value[:200] if isinstance(value, str) else value
+        clean[str(name)] = plain[:MAX_TEXT] if isinstance(plain, str) else plain
     return clean if len(clean) <= MAX_NUMBERS else None
 
 
 def _offline_log(entry: dict) -> None:
-    state.log.append({**entry, "at": _dt.datetime.now().isoformat(timespec="seconds")})
-    os.makedirs(state.handin_dir, exist_ok=True)
-    with open(_log_path(), "w") as fh:
-        json.dump(state.log, fh, indent=2)
+    state.log.append({**entry, "at": dt.datetime.now().isoformat(timespec="seconds")})
+    Path(state.handin_dir).mkdir(parents=True, exist_ok=True)
+    _log_path().write_text(json.dumps(state.log, indent=2))
 
 
 def done(part: str, figures: list | None = None, numbers: dict | None = None) -> bool:
@@ -217,12 +240,8 @@ def done(part: str, figures: list | None = None, numbers: dict | None = None) ->
     return True
 
 
-# What a member reads when a part is ticked. The part name itself stays internal (the portal keys on it).
-_SAVED = {"picked": "Part 1 saved", "weighed": "Part 2 saved", "found": "Hand-in saved",
-          "fitted": "Hand-in saved"}
-
-
 def saved_words(part: str) -> str:
+    """What a member reads when `part` is ticked, from the last word of the part name."""
     return _SAVED.get(part.rsplit("-", 1)[-1], "Progress saved")
 
 
@@ -232,7 +251,7 @@ def stage_file(text: str, title: str, mime: str = "text/plain") -> bool:
     if state.mode == "live" and step:
         return bool(state.helper.stage_text(text, title, step=step, mime=mime))
     if state.mode == "live":
-        return False            # no step to attach to: the member attaches the files on the step page
+        return False  # no step to attach to: the member attaches the files on the step page
     _offline_log({"staged": title, "bytes": len(text.encode()), "step": step})
     return True
 
