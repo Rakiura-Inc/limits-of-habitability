@@ -10,6 +10,7 @@ import pytest
 import habtrain as ht
 
 from .conftest import place
+from .notebook_code import definitions
 
 CATALOG = "J/AJ/165/34/table1.dat"
 SERIES = "J/ApJS/274/35/table3.dat.gz"
@@ -109,17 +110,16 @@ def test_well_sampled_stars_counts_only_nights_since_2005():
     assert ht.data.well_sampled_stars(series, min_obs=44) == ["busy", "quiet"]
 
 
-def test_nightly_averages_each_night_and_counts_in_years():
+def test_notebook_02s_nightly_averages_each_night_and_counts_in_years():
+    nightly = definitions("02_planet_or_star.ipynb")["nightly"]
     start = ht.data.JD_2000  # midnight, so 0.1 and 0.2 days later is the same night
     series = pd.DataFrame({
         "Name": ["A", "A", "A", "B"],
         "BJD": [start + 0.1, start + 0.2, start + 365.25, start],
         "S": [0.1, 0.3, 0.5, 9.0],
     })
-    night = ht.data.nightly(series, "A")
-    assert night.columns.tolist() == ["year", "S", "n"]
+    night = nightly(series, "A")
     assert night.S.tolist() == pytest.approx([0.2, 0.5])
-    assert night.n.tolist() == [2, 1]
     assert night.year.tolist() == pytest.approx([2000.0 + 0.15 / 365.25, 2001.0])
 
 

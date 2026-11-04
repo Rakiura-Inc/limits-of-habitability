@@ -31,7 +31,7 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from .constants import BTJD, DAYS_PER_YEAR
+from .constants import BTJD
 
 CDS = "https://cdsarc.cds.unistra.fr/ftp/"
 # The full mirror of the CDS archive in Japan. It serves plain http only, which is why a file from
@@ -241,17 +241,6 @@ def well_sampled_stars(series: pd.DataFrame, min_obs: int = 45) -> list[str]:
     """Stars with at least `min_obs` observations since 2005: the survey's own cut (285 stars)."""
     counts = series[series.BJD >= JD_2005].groupby("Name").size()
     return sorted(counts[counts >= min_obs].index)
-
-
-def nightly(series: pd.DataFrame, name: str) -> pd.DataFrame:
-    """One star's S-values averaged per night, with time in years. Columns: year, S, n."""
-    one = series[series.Name == name]
-    night = np.floor(one.BJD.to_numpy() + 0.5)  # Julian days start at noon, so this numbers the nights
-    by_night = pd.DataFrame({"night": night, "BJD": one.BJD.to_numpy(), "S": one.S.to_numpy()}).groupby("night")
-    out = pd.DataFrame({"BJD": by_night.BJD.mean(), "S": by_night.S.mean(), "n": by_night.size()})
-    out = out.reset_index(drop=True)
-    out["year"] = 2000.0 + (out.BJD - JD_2000) / DAYS_PER_YEAR
-    return out[["year", "S", "n"]]
 
 
 # ---------------------------------------------------------------- TESS-Keck Survey release
