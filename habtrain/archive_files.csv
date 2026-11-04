@@ -1,0 +1,9 @@
+path,sha256,source
+J/AJ/165/34/table1.dat,38a21f64a660d92e10812f847bc68e50951ebcba0d3e8e4b3299f989e8fc2fbb,"Hill et al. 2023, AJ 165, 34 (fetched 2026-10-25)"
+J/ApJS/274/35/table2.dat,ff11036825b1915ca1228f8c8cdb6c17553989bda4e96a7c278e64595ec167be,"Isaacson et al. 2024, ApJS 274, 35 (fetched 2026-10-25)"
+J/ApJS/274/35/table3.dat.gz,a522f68c01db21c4adae071c7c4cf103ccb32273d5ebbcdb78b9aaa1488cd2d9,"Isaacson et al. 2024, ApJS 274, 35 (fetched 2026-10-25; checksum of the unzipped file)"
+J/ApJS/274/35/table4.dat,6976ae9dd0dda35d0afe0237c515c6a15465ef869978ffae86c2c86ef3f1fdf5,"Isaacson et al. 2024, ApJS 274, 35 (fetched 2026-10-25)"
+J/ApJS/272/32/tksxxrvs.dat,d4cc7a7c3ee23030ce7a84f4226cf29b6601ee0e2171b7b37adf3d9f62362273,"Polanski et al. 2024, ApJS 272, 32 (fetched 2026-10-25)"
+J/ApJS/272/32/table6.dat,ad9fd91d095887dbdc3dfe025c0320beb2264084baa0dedf71fadddfb8e67e26,"Polanski et al. 2024, ApJS 272, 32 (fetched 2026-10-25)"
+J/AJ/162/211/table1.dat,df2ae92f0ed6c442aa2e28c32420ba7fc69b21d2fe98291ba690b41d02591e18,"Hill et al. 2021, AJ 162, 211 (fetched 2026-10-25)"
+J/ApJ/646/505/table1.dat,4ccf041207e4490e10ad8c0c85ab81b4c4aae55c420f63041dea36d43e2a65d6,"Butler et al. 2006, ApJ 646, 505 (fetched 2026-10-25)"
