@@ -202,17 +202,17 @@ def test_planets_table_holds_what_you_know_before_measuring():
     assert table.planet.is_unique
 
 
-def test_star_values_fall_back_to_the_bundled_table_offline():
+def test_star_values_fall_back_to_the_bundled_table_offline(capsys):
     row = ht.data.planets().iloc[0]
     assert ht.data.star_radius(row.planet) == row.st_rad
     assert ht.data.transit_duration(row.planet) == row.pl_trandur
     assert ht.data.star_mass(row.planet) == row.st_mass
-    assert np.isnan(ht.data.star_radius("TOI-0 z"))
+    assert "did not answer, so st_rad" in capsys.readouterr().out  # it says where the value came from
 
 
-def test_star_mass_offline_for_an_unknown_planet_says_so():
-    with pytest.raises(RuntimeError, match="star mass"):
-        ht.data.star_mass("TOI-0 z")
+def test_a_planet_in_neither_the_archive_nor_the_table_says_so():
+    with pytest.raises(KeyError, match=r"not in habtrain's planets\.csv either"):
+        ht.data.star_radius("TOI-0 z")
 
 
 def test_archive_answer_is_used_and_the_name_is_quoted(archive):
