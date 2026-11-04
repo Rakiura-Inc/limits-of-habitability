@@ -72,7 +72,7 @@ def archive(monkeypatch):
     replies = Archive()
     replies.urls = []
 
-    def urlopen(url, timeout=None):
+    def urlopen(url, data=None, timeout=None):
         replies.urls.append(url)
         for fragment, body in replies.items():
             if fragment in url:
