@@ -40,6 +40,9 @@ Everything is public and downloaded by the notebooks when first needed:
 - The Hipparcos-Gaia Catalog of Accelerations, EDR3 edition, Brandt 2021, ApJS 254, 42 (ships inside orbitize!)
 - iota Draconis velocities: Butler et al. 2006, ApJ 646, 505 (VizieR J/ApJ/646/505) and Hill et al. 2021, AJ 162, 211 (VizieR J/AJ/162/211)
 
+The VizieR files come from CDS, or from its mirror in Japan when CDS does not answer. A file from the mirror is
+used only if it matches the checksum recorded in `habtrain/archive_files.csv`, and CI checks every file against it.
+
 ### Acknowledgements
 
 This work has made use of the NASA Exoplanet Archive, which is operated by the California Institute of
@@ -54,16 +57,35 @@ use the data.
 
 ## Running it yourself
 
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/). Python 3.11 to 3.15 work; Colab runs 3.12.
+
 ```
-make local   # a virtual environment with the package, then Jupyter Lab on the notebooks
-make test    # the tests
+make local   # install everything into .venv with uv, then open Jupyter Lab on the notebooks
+make test    # the tests (pytest, in parallel and in random order)
+make lint    # every git hook: ruff on the code and the notebooks, nbstripout, and the rest
+make data    # download the archive files into notebooks/data/ and check their checksums
 make run     # run every notebook with blank answers into notebooks/executed/
 ```
 
+CI runs tess_02's joint fits with 2,000 steps instead of 20,000 (the `HABTRAIN_CI_JOINT_FIT_STEPS` variable),
+so the notebook job ends in minutes. Nothing else sets that variable, so in Colab the fits always run in full.
+
 `habtrain/` holds the plumbing: downloads, fits, plots, recording answers. The notebooks hold the thinking.
-The TESS project notebooks also need `pip install "habtrain[tess]"`, which adds batman, astroquery and
-setuptools; the Gaia project notebooks need `pip install "habtrain[orbits]"`, which adds orbitize!. Their first cells do this. Answers to the exercises are not in this repository: they open on
-each step in Rakiura after you hand it in.
+
+### Why habtrain is a package
+
+Each notebook's first cell installs it with
+`pip install "habtrain @ git+https://github.com/Rakiura-Inc/limits-of-habitability@main"`, so Colab gets the
+code without cloning this repository. That install needs a build system, so `pyproject.toml` builds the package
+with hatchling. The TESS project notebooks install `habtrain[tess]`, which adds batman, astroquery and setuptools
+(batman still imports distutils); the Gaia project notebooks install `habtrain[orbits]`, which adds orbitize!.
+Answers to the exercises are not in this repository: they open on each step in Rakiura after you hand it in.
+
+### Contributing
+
+Install the git hooks with `uvx prek install`; they run on every commit, and CI runs them on every pull request.
+Committed notebooks carry no outputs: nbstripout clears them. `uv.lock` pins every dependency for the tests
+and CI, and Renovate keeps it and the hooks and actions up to date.
 
 Code: MIT licence (see LICENSE). batman-package, used only by the TESS project notebooks, is GPL-3.0 and is
 installed separately, not included here.

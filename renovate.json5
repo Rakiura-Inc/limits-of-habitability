@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":pinDevDependencies",
+    // Updates the "# renovate:" pinned versions in the workflows, such as UV_VERSION.
+    "customManagers:githubActionsVersions",
+  ],
+  // uv.lock is committed: refresh it weekly so the locked versions stay current.
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 0-6 * * 1"],
+  },
+  "pre-commit": {
+    "enabled": true,
+  },
+}

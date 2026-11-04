@@ -1,0 +1,10 @@
+[pytest]
+addopts = [
+    # Enable parallelization
+    "-n", "auto",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    # orbitize! still sets array shapes in place, which NumPy 2.5 deprecates; nothing habtrain can change.
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning:orbitize",
+]
