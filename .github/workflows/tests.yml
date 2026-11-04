@@ -148,7 +148,4 @@ jobs:
           # (02's widget cell once hung with the kernel idle), so stop it and name it instead of waiting for the
           # job timeout.
           CELL_TIMEOUT: 900
-          # GitHub's runners sometimes reach no VizieR server. gaia_01 then reads orbitize!'s one Hipparcos row
-          # from this checked-in copy (checksum in habtrain/orbits.py) and says so. Only used here, never in Colab.
-          HABTRAIN_CI_HIPPARCOS: ${{ github.workspace }}/tests/fixtures/hipparcos_beta_pic.ecsv
         run: make run

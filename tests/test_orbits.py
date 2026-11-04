@@ -173,89 +173,16 @@ def test_seed_orbitize_makes_the_next_run_repeat():
     assert first == second
 
 
-@pytest.fixture
-def vizier_default(monkeypatch):
-    """The server and timeout astroquery's new Vizier queries use, put back after the test. No real waits."""
-    from astroquery.vizier import VizierClass
-
-    defaults = VizierClass.__init__.__kwdefaults__
-    monkeypatch.setitem(defaults, "vizier_server", defaults["vizier_server"])
-    monkeypatch.setitem(defaults, "timeout", defaults["timeout"])
-    monkeypatch.delenv(ht.orbits.CI_HIPPARCOS_COPY, raising=False)
-    monkeypatch.setattr(ht.orbits.time, "sleep", lambda seconds: None)
-    return defaults
-
-
-def test_vizier_stays_at_cds_when_it_answers(archive, vizier_default, capsys):
-    archive["vizier.cds.unistra.fr"] = b"<VOTABLE/>"
-    assert ht.orbits.use_answering_vizier() == "vizier.cds.unistra.fr"
-    assert vizier_default["vizier_server"] == "vizier.cds.unistra.fr"
-    assert vizier_default["timeout"] == ht.orbits.VIZIER_QUERY_TIMEOUT_SECONDS
-    assert capsys.readouterr().out == ""
-
-
-def test_vizier_moves_to_a_mirror_when_cds_does_not_answer(archive, vizier_default, capsys):
-    archive["vizier.cfa.harvard.edu"] = b"<VOTABLE/>"
-    assert ht.orbits.use_answering_vizier() == "vizier.cfa.harvard.edu"
-    assert vizier_default["vizier_server"] == "vizier.cfa.harvard.edu"
-    assert "mirror vizier.cfa.harvard.edu" in capsys.readouterr().out
-
-
-@pytest.mark.usefixtures("vizier_default")
-def test_vizier_asks_every_server_again_after_each_wait(archive, capsys):
-    with pytest.raises(RuntimeError, match="Wait a few minutes"):
-        ht.orbits.use_answering_vizier()
-    rounds = 1 + len(ht.orbits.VIZIER_RETRY_WAITS_SECONDS)
-    assert len(archive.urls) == rounds * len(ht.orbits.VIZIER_SERVERS)
-    assert capsys.readouterr().out.count("Asking again") == len(ht.orbits.VIZIER_RETRY_WAITS_SECONDS)
-
-
-@pytest.mark.usefixtures("vizier_default")
-def test_vizier_says_to_wait_when_no_server_answers():
-    with pytest.raises(RuntimeError, match="Wait a few minutes"):
-        ht.orbits.use_answering_vizier()
-
-
-CI_COPY = Path(__file__).parent / "fixtures" / "hipparcos_beta_pic.ecsv"
-
-
-@pytest.fixture
-def hipparcos_module(monkeypatch):
-    """orbitize.hipparcos, with its Vizier put back after the test."""
+def test_gaia_01s_hipparcos_file_needs_no_catalog_lookup(monkeypatch):
+    """gaia_01 reads the Hipparcos 2 record, which carries the star's solution, so VizieR is never asked."""
     hipparcos = pytest.importorskip("orbitize.hipparcos")
-    monkeypatch.setattr(hipparcos, "Vizier", hipparcos.Vizier)
-    return hipparcos
-
-
-@pytest.mark.usefixtures("vizier_default")
-def test_ci_copy_answers_orbitizes_hipparcos_lookup_only_when_no_server_does(monkeypatch, hipparcos_module, capsys):
     from orbitize import DATADIR
 
-    monkeypatch.setenv(ht.orbits.CI_HIPPARCOS_COPY, str(CI_COPY))
-    assert ht.orbits.use_answering_vizier() == "ci copy"
-    assert "CI ONLY" in capsys.readouterr().out
-    beta_pic = hipparcos_module.HipparcosLogProb(
-        str(Path(DATADIR) / "HIP027321.d"), hip_num=27321, num_secondary_bodies=1
-    )
-    assert beta_pic.plx0 == np.float32(51.44)  # the same float32 VizieR sends
-    assert beta_pic.pm_dec0 == 83.1
+    def no_lookup(*args, **kwargs):
+        msg = "gaia_01 should not need VizieR"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(hipparcos, "Vizier", no_lookup)
+    beta_pic = hipparcos.HipparcosLogProb(str(Path(DATADIR) / "H027321.d"), hip_num=27321, num_secondary_bodies=1)
+    assert beta_pic.plx0 == pytest.approx(51.44)
     assert beta_pic.solution_type == 5  # a standard five-parameter solution
-
-
-@pytest.mark.usefixtures("vizier_default", "hipparcos_module")
-def test_ci_copy_that_changed_fails_loudly(monkeypatch, tmp_path):
-    edited = tmp_path / "hipparcos_beta_pic.ecsv"
-    edited.write_text(CI_COPY.read_text().replace("51.44", "51.45"))
-    monkeypatch.setenv(ht.orbits.CI_HIPPARCOS_COPY, str(edited))
-    with pytest.raises(RuntimeError, match="recorded in habtrain"):
-        ht.orbits.use_answering_vizier()
-
-
-@pytest.mark.usefixtures("vizier_default", "hipparcos_module")
-def test_ci_copy_names_a_star_it_does_not_hold(monkeypatch):
-    from orbitize import hipparcos
-
-    monkeypatch.setenv(ht.orbits.CI_HIPPARCOS_COPY, str(CI_COPY))
-    ht.orbits.use_answering_vizier()
-    with pytest.raises(LookupError, match="HIP 1 is not in the CI copy"):
-        hipparcos.Vizier(catalog="I/311/hip2", columns=["Plx"]).query_constraints(HIP=1)
