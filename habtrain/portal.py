@@ -144,7 +144,10 @@ def _start_live(helper, notebook: str, repo: str, loud: bool) -> bool:
         if helper.start(notebook=notebook, repo=repo, quiet=not loud):
             state.helper, state.mode = helper, "live"
             name = _member_name(helper)
-            print(f"Connected to Rakiura as {name}." if name else "Connected to Rakiura.")
+            if name:
+                print(f"Connected to Rakiura as {name}.")
+            else:
+                print("Connected to Rakiura.")
             return True
     except Exception:  # noqa: BLE001 - a failed start leaves the notebook offline
         return False

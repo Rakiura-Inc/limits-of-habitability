@@ -144,10 +144,8 @@ jobs:
 
       - name: Run every notebook with blank answers
         env:
-          # tess_02's two joint fits take about half an hour at the notebook's 20,000 steps. CI runs them
-          # short to check that the notebook works; members always run the full fit (habtrain/joint.py).
-          HABTRAIN_CI_JOINT_FIT_STEPS: 2000
-          # The slowest cell takes about 7 minutes here. A cell that runs far longer is stuck (02's widget
-          # cell once hung with the kernel idle), so stop it and name it instead of waiting for the job timeout.
+          # The slowest cells are tess_02's joint fits, a few minutes each. A cell that runs far longer is stuck
+          # (02's widget cell once hung with the kernel idle), so stop it and name it instead of waiting for the
+          # job timeout.
           CELL_TIMEOUT: 900
         run: make run

@@ -13,7 +13,8 @@ def test_reports_sort_by_last_sector_then_by_how_many_sectors_they_span():
         "tess-s0014-s0014-dvr.pdf",
         "other-dvr.pdf",
     ]
-    assert sorted(files, key=ht.vet._run_order) == [
+    reports = [{"file": file} for file in files]
+    assert [report["file"] for report in sorted(reports, key=ht.vet._run_order)] == [
         "other-dvr.pdf",
         "tess-s0014-s0014-dvr.pdf",
         "tess-s0014-s0060-dvr.pdf",
@@ -52,6 +53,33 @@ def test_gaia_neighbours_asks_for_stars_within_the_radius(monkeypatch):
     assert "CIRCLE(10.0,-5.0, 0.01)" in asked[0]
 
 
+def test_gaia_neighbours_come_from_gavo_when_esa_does_not_answer(monkeypatch, archive, capsys):
+    gaia = pytest.importorskip("astroquery.gaia")
+
+    def unavailable(query):
+        msg = "Error 503"
+        raise OSError(msg)
+
+    monkeypatch.setattr(gaia.Gaia, "launch_job", unavailable)
+    archive["dc.zah.uni-heidelberg.de"] = b"source_id,phot_g_mean_mag,ruwe,sep_arcsec\n7,12.5,1.01,3.2\n"
+    neighbours = ht.vet.gaia_neighbours(10.0, -5.0)
+    assert neighbours.source_id.tolist() == [7]
+    assert neighbours.ruwe.tolist() == [1.01]
+    assert "GAVO's copy of Gaia DR3" in capsys.readouterr().out
+
+
+def test_gaia_neighbours_say_to_wait_when_neither_archive_answers(monkeypatch):
+    gaia = pytest.importorskip("astroquery.gaia")
+
+    def unavailable(query):
+        msg = "Error 503"
+        raise OSError(msg)
+
+    monkeypatch.setattr(gaia.Gaia, "launch_job", unavailable)
+    with pytest.raises(RuntimeError, match="Wait a few minutes"):
+        ht.vet.gaia_neighbours(10.0, -5.0)
+
+
 def test_tic_star_reads_mass_and_radius_with_uncertainties(monkeypatch):
     mast = pytest.importorskip("astroquery.mast")
 
@@ -60,7 +88,9 @@ def test_tic_star_reads_mass_and_radius_with_uncertainties(monkeypatch):
             return pd.DataFrame({"mass": [0.9], "e_mass": [0.1], "rad": [0.8], "e_rad": [0.05]})
 
     monkeypatch.setattr(mast.Catalogs, "query_criteria", lambda **query: Table())
-    assert ht.vet.tic_star(42) == {"mass": (0.9, 0.1), "radius": (0.8, 0.05)}
+    star = ht.vet.tic_star(42)
+    assert star == {"mass": (0.9, 0.1), "radius": (0.8, 0.05)}
+    assert star["mass"].uncertainty == 0.1
 
 
 def test_exofop_page_links_to_the_star():

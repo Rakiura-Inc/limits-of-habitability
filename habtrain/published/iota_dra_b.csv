@@ -1,0 +1,6 @@
+quantity,value,minus,plus,unit,source
+semi-major axis (AU),1.448,0.029,0.028,AU,"Hill et al. 2021, AJ 162, 211, table 3 (RadVel fit to velocities)"
+eccentricity,0.7008,0.0018,0.0018,,"Hill et al. 2021, AJ 162, 211, table 3 (RadVel fit to velocities)"
+minimum mass (Jupiter masses),11.67,0.46,0.45,Jupiter masses,"Hill et al. 2021, AJ 162, 211, table 3 (RadVel fit to velocities)"
+APF jitter (m/s),10.67,0.42,0.44,m/s,"Hill et al. 2021, AJ 162, 211, table 3 (RadVel fit to velocities)"
+Lick jitter (m/s),13.85,0.84,0.92,m/s,"Hill et al. 2021, AJ 162, 211, table 3 (RadVel fit to velocities)"

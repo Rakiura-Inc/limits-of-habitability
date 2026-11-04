@@ -54,23 +54,6 @@ def table():
     return pd.DataFrame({"planet": ["a", "b", "c"]}, index=[10, 20, 30])
 
 
-def test_pick_by_number_counts_from_one(table, capsys):
-    assert ht.record.pick(2, table, "planet", "planet").planet == "b"
-    assert "Your planet: number 2, b." in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("choice", [0, 4, 1.5, "2"])
-def test_pick_out_of_range_uses_number_one(choice, table, capsys):
-    assert ht.record.pick(choice, table, "planet", "planet").planet == "a"
-    assert "Pick a whole number from 1 to 3" in capsys.readouterr().out
-
-
-def test_pick_left_blank_picks_at_random_and_says_which(table, capsys):
-    row = ht.record.pick(..., table, "planet", "planet")
-    assert row.planet in {"a", "b", "c"}
-    assert "picked number" in capsys.readouterr().out
-
-
 def test_numbered_counts_rows_from_one(table):
     t = ht.record.numbered(table)
     assert t.index.tolist() == [1, 2, 3]
@@ -93,7 +76,9 @@ def test_handin_writes_answers_figures_and_ticks_the_part(capsys):
     ht.record.revealed("guess")
     fig, ax = plt.subplots()
     ax.plot([1, 2])
-    ht.record.handin("planet-weighed", ["k", "mass"], figures={"orbit": fig}, numbers={"k": 9.5})
+    ht.record.keep_figure("planet-weighed", "orbit", fig)
+    ht.record.keep_figure("another-part", "other", fig)  # kept for another hand-in, so not saved here
+    ht.record.handin("planet-weighed", ["k", "mass"], numbers={"k": 9.5})
     out = Path(ht.portal.state.handin_dir) / "planet-weighed"
     record = json.loads((out / "results.json").read_text())
     assert record["answers"]["k"]["value"] == 9.5
@@ -115,3 +100,20 @@ def test_a_prediction_made_after_its_reveal_is_marked():
     ht.record.predict("late", 1)
     ht.record._reveals["late"] = "2000-01-01T00:00:00"
     assert ht.record._record("p", [])["predictions"]["late"]["made_before_reveal"] is False
+
+
+def test_answer_gives_an_earlier_answer_or_says_what_to_run():
+    ht.record.save("my_planet", "TOI-1 b", "your planet")
+    assert ht.record.answer("my_planet", missing="Run Part 1 first.") == "TOI-1 b"
+    with pytest.raises(RuntimeError, match="Run Part 2 first"):
+        ht.record.answer("my_star", missing="Run Part 2 first.")
+
+
+def test_handin_mentions_plots_on_the_step_only_when_the_part_kept_some(capsys):
+    ht.record.save("verdict", "planet", "your call")
+    ht.record.handin("no-plots", ["verdict"])
+    assert "plots are already on the step" not in capsys.readouterr().out
+    figure = plt.figure()
+    ht.record.keep_figure("with-plots", "map", figure)
+    ht.record.handin("with-plots", ["verdict"])
+    assert "plots are already on the step" in capsys.readouterr().out
