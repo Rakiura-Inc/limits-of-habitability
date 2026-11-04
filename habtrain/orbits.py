@@ -1,7 +1,7 @@
 """Plumbing for the Gaia and radial velocity project.
 
-The catalog of accelerations, iota Draconis's public velocities and published orbit, a VizieR
-server that answers, and a seed for orbitize!'s sampler. The orbit fits themselves are written out
+The catalog of accelerations, iota Draconis's public velocities and published orbit, and a seed
+for orbitize!'s sampler. The orbit fits themselves are written out
 in the notebooks with orbitize!'s own calls.
 
 orbitize! (Blunt et al. 2020, AJ 159, 89) is an optional install: pip install "habtrain[orbits]".
@@ -15,9 +15,6 @@ Everything here imports it only when needed.
 from __future__ import annotations
 
 import functools
-import hashlib
-import os
-import time
 import types
 import urllib.request
 from pathlib import Path
@@ -25,27 +22,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .data import DOWNLOAD_ERRORS, DOWNLOAD_TIMEOUT_SECONDS, fetch, parse_number, parse_text, read_fixed_width
+from .data import fetch, parse_number, parse_text, read_fixed_width
 
 MJUP_IN_MSUN = 9.547919e-4  # Jupiter's mass in solar masses (IAU 2015)
 MJD_OFFSET = 2400000.5  # modified Julian date = Julian date minus this
 HGCA_URL = "https://cdsarc.cds.unistra.fr/ftp/J/ApJS/254/42/HGCA_vEDR3.fits"
 PUBLISHED_B_CSV = Path(__file__).parent / "published" / "iota_dra_b.csv"
-
-# orbitize! looks a star up in the Hipparcos catalog (VizieR I/311) through astroquery. These are
-# the VizieR servers to ask, in turn: CDS, then its mirrors at Harvard and in Cape Town.
-VIZIER_SERVERS = ("vizier.cds.unistra.fr", "vizier.cfa.harvard.edu", "vizier.idia.ac.za")
-VIZIER_TEST_QUERY = "https://{server}/viz-bin/votable?-source=I/311/hip2&-out=HIP&-out.max=1"
-# A server can be down for a minute, so ask all three again after each of these waits before giving up.
-VIZIER_RETRY_WAITS_SECONDS = (10, 30)
-# A mirror took 60 s to send beta Pic's row on 2026-11-04, astroquery's whole default wait.
-VIZIER_QUERY_TIMEOUT_SECONDS = 180
-
-# CI only. GitHub's runners sometimes reach no VizieR server at all. The notebook job then points
-# this variable at tests/fixtures/hipparcos_beta_pic.ecsv, a checked-in copy of the one row
-# orbitize! asks for. It is never set in Colab, and the copy is not part of the package.
-CI_HIPPARCOS_COPY = "HABTRAIN_CI_HIPPARCOS"
-CI_HIPPARCOS_SHA256 = "dce0177b32b89c394b5d3b3b40a9340759c8f176b0a8d630b2857afd019c0cb3"
 
 # iota Draconis (HIP 75458). Star mass from asteroseismology and parallax from Gaia EDR3, both as
 # Hill et al. 2021 and the catalog of accelerations give them.
@@ -116,90 +98,6 @@ def hgca_row(hip: int) -> dict | None:
         if len(rows) == 0:
             return None
         return {name: _plain_value(rows[0][name]) for name in table.columns.names}
-
-
-def _vizier_answers(server: str) -> bool:
-    try:
-        with urllib.request.urlopen(  # noqa: S310 - fixed https URLs
-            VIZIER_TEST_QUERY.format(server=server), timeout=DOWNLOAD_TIMEOUT_SECONDS
-        ):
-            return True
-    except DOWNLOAD_ERRORS:
-        return False
-
-
-def _first_answering_vizier() -> str | None:
-    for wait_seconds in (0, *VIZIER_RETRY_WAITS_SECONDS):
-        if wait_seconds:
-            print(f"No VizieR server answered. Asking again in {wait_seconds} s...")
-            time.sleep(wait_seconds)
-        for server in VIZIER_SERVERS:
-            if _vizier_answers(server):
-                return server
-    return None
-
-
-def use_answering_vizier() -> str:
-    """Send astroquery's VizieR queries, and so orbitize!'s, to the first server in VIZIER_SERVERS that answers.
-
-    Asks each server in turn, and all of them again after each wait in VIZIER_RETRY_WAITS_SECONDS.
-    Returns the server's name. Prints a line when it is a mirror, not CDS.
-    """
-    from astroquery.vizier import VizierClass
-
-    server = _first_answering_vizier()
-    if server is None:
-        copy = os.environ.get(CI_HIPPARCOS_COPY)
-        if copy:
-            _answer_hipparcos_from_copy(copy)
-            return "ci copy"
-        msg = (
-            "Neither VizieR at CDS nor its mirrors answered, so orbitize! cannot look the star up. "
-            "Wait a few minutes and run the cell again."
-        )
-        raise RuntimeError(msg)
-    if server != VIZIER_SERVERS[0]:
-        print(f"VizieR at CDS did not answer, so the Hipparcos catalog comes from its mirror {server}.")
-    # Each new astroquery query takes these from its defaults, which astroquery fixes when it is imported.
-    VizierClass.__init__.__kwdefaults__["vizier_server"] = server
-    VizierClass.__init__.__kwdefaults__["timeout"] = VIZIER_QUERY_TIMEOUT_SECONDS
-    return server
-
-
-class _HipparcosCopy:
-    """CI only: stands in for astroquery's Vizier in orbitize.hipparcos, answering from a checked-in table."""
-
-    def __init__(self, rows, path):
-        self.rows = rows
-        self.path = path
-        self.columns = rows.colnames
-
-    def __call__(self, *, catalog, columns):
-        if catalog != "I/311/hip2":
-            msg = f"The CI copy {self.path} holds only VizieR I/311/hip2, not {catalog}."
-            raise ValueError(msg)
-        self.columns = columns
-        return self
-
-    def query_constraints(self, **constraints):
-        found = self.rows[self.rows["HIP"] == int(constraints["HIP"])]
-        if len(found) == 0:
-            msg = f"HIP {constraints['HIP']} is not in the CI copy {self.path}. Add its row there."
-            raise LookupError(msg)
-        return [found[self.columns]]
-
-
-def _answer_hipparcos_from_copy(path: str) -> None:
-    """CI only: answer orbitize!'s Hipparcos lookup from the checked-in copy, once its checksum matches."""
-    from astropy.table import Table
-    from orbitize import hipparcos
-
-    actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    if actual != CI_HIPPARCOS_SHA256:
-        msg = f"{path} has sha256 {actual}, not the {CI_HIPPARCOS_SHA256} recorded in habtrain/orbits.py."
-        raise RuntimeError(msg)
-    print(f"CI ONLY: no VizieR server answered, so orbitize! reads the Hipparcos row from {path}.")
-    hipparcos.Vizier = _HipparcosCopy(Table.read(path, format="ascii.ecsv"), path)
 
 
 # The three measurements of a star's motion, in time order: (column suffix, label, colour).
