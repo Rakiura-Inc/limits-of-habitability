@@ -1,4 +1,4 @@
-"""TESS light curves: download, clean, fold. The member measures the dip.
+"""Plumbing for notebook 3's light curves. The notebook calls lightkurve itself to download, flatten and fold.
 
 Light curves are the Science Processing Operations Center's 2-minute data (SPOC, PDCSAP flux),
 fetched from the Mikulski Archive for Space Telescopes (MAST) through lightkurve.
@@ -10,51 +10,34 @@ import warnings
 
 import numpy as np
 
-from .constants import BTJD
-
-FLATTEN_WINDOW = 721  # points in the smoothing window: about a day of 2-minute data
-TRANSIT_MASK_WIDTH = 1.5  # hide this many transit durations from the smoothing
 MIN_POINTS_PER_BIN = 5
 
 
-def download(target: str, sectors: int = 2):
-    """Up to `sectors` TESS sectors of 2-minute data for a star such as "TOI-669", joined into one curve.
-
-    Each sector's brightness is divided by its own median, so 1.0 means the star's usual brightness.
-    """
-    with warnings.catch_warnings():  # lightkurve warns about an optional add-on these notebooks never use
+def lightkurve():
+    """The lightkurve module, imported without its warning about an optional add-on nobody here uses."""
+    with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         import lightkurve as lk
-    found = lk.search_lightcurve(target, mission="TESS", author="SPOC", exptime=120)
-    if len(found) == 0:
-        msg = f"No 2-minute TESS light curve found for {target}."
-        raise RuntimeError(msg)
-    lcs = found[:sectors].download_all(flux_column="pdcsap_flux")
-    return lcs.stitch().remove_nans()
+    return lk
 
 
-def flatten(lc, P: float, T0: float, duration_hours: float):
-    """Take out the star's slow changes in brightness, leaving the transits alone.
-
-    The transits (and a margin either side) are hidden from the smoothing so it cannot eat into them.
-    """
-    mask = lc.create_transit_mask(period=P, transit_time=T0 - BTJD, duration=duration_hours / 24 * TRANSIT_MASK_WIDTH)
-    return lc.flatten(window_length=FLATTEN_WINDOW, mask=mask)
-
-
-def _plain(x):
+def _plain(column):
     """A plain float array from a possibly masked one, with masked points set to NaN."""
-    a = np.array(getattr(x, "unmasked", x), dtype=float)
-    mask = getattr(x, "mask", None)
+    values = np.array(getattr(column, "unmasked", column), dtype=float)
+    mask = getattr(column, "mask", None)
     if mask is not None:
-        a[np.asarray(mask, dtype=bool)] = np.nan
-    return a
+        values[np.asarray(mask, dtype=bool)] = np.nan
+    return values
 
 
-def fold(flat, P: float, T0: float):
-    """Fold on the period. Returns (hours from mid-transit, brightness) as plain arrays, gaps dropped."""
-    folded = flat.fold(period=P, epoch_time=T0 - BTJD)
-    hours, flux = _plain(folded.time.value) * 24, _plain(folded.flux.value)
+def folded_arrays(folded):
+    """(hours from mid-transit, brightness) from a light curve lightkurve has folded, gaps dropped.
+
+    lightkurve keeps the gaps between sectors as masked points; this drops them, so the arrays
+    work with numpy's median and the plots.
+    """
+    hours = _plain(folded.time.value) * 24
+    flux = _plain(folded.flux.value)
     keep = np.isfinite(hours) & np.isfinite(flux)
     return hours[keep], flux[keep]
 
@@ -63,14 +46,15 @@ def binned(hours, flux, width_minutes: float = 15.0):
     """Average the folded points in bins, so the dip stands out from the scatter.
 
     Returns (bin centres, median brightness in each bin), leaving out bins with fewer than
-    MIN_POINTS_PER_BIN points.
+    MIN_POINTS_PER_BIN points. A plain loop over about a hundred bins, slower than np.bincount and
+    easier to read.
     """
-    width = width_minutes / 60
-    edges = np.arange(hours.min(), hours.max() + width, width)
+    width_hours = width_minutes / 60
+    edges = np.arange(hours.min(), hours.max() + width_hours, width_hours)
     bin_of = np.digitize(hours, edges)
     centres, middles = [], []
-    for i in np.unique(bin_of):
-        inside = bin_of == i
+    for number in np.unique(bin_of):
+        inside = bin_of == number
         if inside.sum() >= MIN_POINTS_PER_BIN:
             centres.append(hours[inside].mean())
             middles.append(np.median(flux[inside]))
