@@ -111,3 +111,22 @@ def test_star_sliders_list_the_nearest_stars_and_keep_the_pick(shown, monkeypatc
     activity.value = -4.0
     assert dropdown.options[1].startswith("HD 5")
     assert dropdown.value is None  # moving the crosshair clears the menu
+
+
+def test_bootcamp_and_tess_project_pick_different_planets_for_a_member_who_leaves_the_menu():
+    planets = ht.data.planets()
+    bootcamp = list(planets[planets.planet != "TOI-1181 b"].planet)  # notebooks 3 and 4
+    tess = list(planets[planets.planet != "TOI-669 b"].planet)  # tess_01 and tess_02
+    bootcamp_pick = ht.choose.random_pick(bootcamp, ht.choose.BOOTCAMP_PICK_SEED)
+    tess_pick = ht.choose.random_pick(tess, ht.choose.TESS_PICK_SEED)
+    assert bootcamp_pick != tess_pick
+    # Both radii miss their published values on a correct fit (readiness audit, 2026-11-04).
+    assert {bootcamp_pick, tess_pick}.isdisjoint({"TOI-1437 b", "TOI-1799 b"})
+
+
+def test_resolve_picks_with_the_menus_seed(capsys):
+    table = pd.DataFrame({"planet": [f"TOI-{n} b" for n in range(1, 21)]})
+    choice = ht.choose.Choice(pick_seed=ht.choose.TESS_PICK_SEED)
+    picked = ht.choose.resolve(choice, ..., table=table, name_column="planet", what="planet")
+    assert picked == ht.choose.random_pick(list(table.planet), ht.choose.TESS_PICK_SEED)
+    assert "for you" in capsys.readouterr().out

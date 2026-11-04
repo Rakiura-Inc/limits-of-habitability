@@ -203,7 +203,9 @@ def _record(part: str, names: list[str]) -> dict:
 
 HANDIN_HOWTO = (
     "To hand in: open this step in Rakiura, press Hand in, and attach these files or paste the table. "
-    "In Colab the folder is in the Files panel on the left; right-click a file to download it.\n"
+    "In Colab the folder is in the Files panel on the left; right-click a file to download it."
+)
+HANDIN_CONNECTED_WITH_PLOTS = (
     "If you connected this notebook to Rakiura, your plots are already on the step. "
     "Attach results.md or paste the table, then press Hand in."
 )
@@ -242,3 +244,5 @@ def handin(part: str, names: list[str], numbers: dict | None = None) -> None:
     files = ", ".join(["results.md (the table above)", "results.json"] + [f"{name}.png" for name in kept])
     # Say exactly what to hand in and where the files are, connected or not.
     print(f"Saved in the folder {os.path.relpath(out)}/ : {files}.\n{HANDIN_HOWTO}")
+    if kept:  # a part with no plots has nothing already on the step
+        print(HANDIN_CONNECTED_WITH_PLOTS)

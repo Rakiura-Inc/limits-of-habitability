@@ -107,3 +107,13 @@ def test_answer_gives_an_earlier_answer_or_says_what_to_run():
     assert ht.record.answer("my_planet", missing="Run Part 1 first.") == "TOI-1 b"
     with pytest.raises(RuntimeError, match="Run Part 2 first"):
         ht.record.answer("my_star", missing="Run Part 2 first.")
+
+
+def test_handin_mentions_plots_on_the_step_only_when_the_part_kept_some(capsys):
+    ht.record.save("verdict", "planet", "your call")
+    ht.record.handin("no-plots", ["verdict"])
+    assert "plots are already on the step" not in capsys.readouterr().out
+    figure = plt.figure()
+    ht.record.keep_figure("with-plots", "map", figure)
+    ht.record.handin("with-plots", ["verdict"])
+    assert "plots are already on the step" in capsys.readouterr().out

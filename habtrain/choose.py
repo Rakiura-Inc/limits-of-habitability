@@ -1,7 +1,7 @@
 """Choose a planet or a star by where it sits on a map, not by typing its name.
 
 Each menu sits under a map, and choosing redraws the map with your choice marked. The first option
-lets the notebook pick one at random. If the menus do not appear (they need ipywidgets, which Colab
+lets the notebook pick one for you. If the menus do not appear (they need ipywidgets, which Colab
 has), the notebook uses the number you type in MY_PICK instead.
 """
 
@@ -15,11 +15,16 @@ import numpy as np
 from . import plot
 from .data import nearest_stars
 
-RANDOM = "Pick one for me at random"
+RANDOM = "Pick one for me"
 FULL_LABEL = {"description_width": "initial"}  # show a control's whole label, not a cut-off one
 
-# A fixed seed, so a "random" pick is the same every run and a member's numbers match the worked answers.
+# Fixed seeds, so a pick made for the member is the same every run and their numbers match the
+# worked answers. The bootcamp and the TESS project use different ones, so a member who leaves both
+# menus alone still gets two different planets: with planets.csv as of 2026-11-04, TOI-1173 b in
+# notebooks 3 and 4, and TOI-1601 b in tess_01 and tess_02.
 RANDOM_PICK_SEED = 1
+BOOTCAMP_PICK_SEED = 38
+TESS_PICK_SEED = 23
 
 # Where the star map's crosshair starts: colour (B-V) and activity (log R'HK).
 START_COLOUR = 0.75
@@ -31,6 +36,7 @@ class Choice:
     """What was chosen in a menu."""
 
     name: str | None = None  # set when the member picks from the menu
+    pick_seed: int = RANDOM_PICK_SEED  # what "Pick one for me" uses, in the menu and in resolve()
 
 
 def _widgets():
@@ -43,9 +49,9 @@ def _widgets():
     return ipywidgets, display, clear_output
 
 
-def random_pick(names: list[str]) -> str:
-    """One of `names`, picked with RANDOM_PICK_SEED."""
-    rng = np.random.default_rng(RANDOM_PICK_SEED)
+def random_pick(names: list[str], seed: int = RANDOM_PICK_SEED) -> str:
+    """One of `names`, picked with `seed`."""
+    rng = np.random.default_rng(seed)
     return names[int(rng.integers(len(names)))]
 
 
@@ -55,13 +61,13 @@ def _dropdown(widgets, options: list[str], label: str):
     )
 
 
-def _menu(table, name_column: str, *, descriptions: list[str], draw_map, label: str) -> Choice:
+def _menu(table, name_column: str, *, descriptions: list[str], draw_map, label: str, pick_seed: int) -> Choice:
     """A menu of the rows of `table`, one description each, that redraws the map with the choice marked.
 
     `draw_map(table, chosen_name)` draws the map.
     """
     names = list(table[name_column])
-    choice = Choice()
+    choice = Choice(pick_seed=pick_seed)
     widgets, display, clear_output = _widgets()
     if widgets is None:
         print("The menu needs ipywidgets. Type your choice's number from the map in MY_PICK below instead.")
@@ -73,13 +79,13 @@ def _menu(table, name_column: str, *, descriptions: list[str], draw_map, label: 
         if change["new"] is None:
             return
         if change["new"] == RANDOM:
-            choice.name = random_pick(names)
+            choice.name = random_pick(names, choice.pick_seed)
         else:
             choice.name = names[dropdown.index - 1]  # option 0 is the random pick
         with output:
             clear_output(wait=True)
             if change["new"] == RANDOM:
-                print(f"The notebook picked {choice.name} at random.")
+                print(f"The notebook picked {choice.name} for you.")
             draw_map(table, choice.name)
             plt.show()
 
@@ -105,7 +111,14 @@ def catalog_menu(candidates) -> Choice:
     descriptions = []
     for number, row in enumerate(table.itertuples(), start=1):
         descriptions.append(describe_catalog_planet(number, row))
-    return _menu(table, "Planet", descriptions=descriptions, draw_map=_draw_catalog_choice, label="Your planet:")
+    return _menu(
+        table,
+        "Planet",
+        descriptions=descriptions,
+        draw_map=_draw_catalog_choice,
+        label="Your planet:",
+        pick_seed=RANDOM_PICK_SEED,
+    )
 
 
 def describe_survey_planet(number: int, row) -> str:
@@ -116,13 +129,23 @@ def describe_survey_planet(number: int, row) -> str:
     )
 
 
-def planet_menu(planets) -> Choice:
-    """A menu of the survey planets, numbered as on the planet map, that circles your choice."""
+def planet_menu(planets, pick_seed: int = RANDOM_PICK_SEED) -> Choice:
+    """A menu of the survey planets, numbered as on the planet map, that circles your choice.
+
+    `pick_seed` sets which planet "Pick one for me" gives (BOOTCAMP_PICK_SEED or TESS_PICK_SEED).
+    """
     table = planets.reset_index(drop=True)
     descriptions = []
     for number, row in enumerate(table.itertuples(), start=1):
         descriptions.append(describe_survey_planet(number, row))
-    return _menu(table, "planet", descriptions=descriptions, draw_map=plot.planet_map, label="Your planet:")
+    return _menu(
+        table,
+        "planet",
+        descriptions=descriptions,
+        draw_map=plot.planet_map,
+        label="Your planet:",
+        pick_seed=pick_seed,
+    )
 
 
 def describe_star(row) -> str:
@@ -178,7 +201,7 @@ def star_menu(summary) -> Choice:
         if change["new"] == RANDOM:
             choice.name = random_pick(list(table.Name))
             with output:
-                print(f"The notebook picked {choice.name} at random.")
+                print(f"The notebook picked {choice.name} for you.")
         else:
             choice.name = closest.Name.iloc[dropdown.index - 1]  # option 0 is the random pick
 
@@ -198,7 +221,7 @@ def _typed_number(typed) -> int | None:
 
 
 def resolve(choice: Choice, typed, *, table, name_column: str, what: str) -> str:
-    """The name to use: what you chose in the menu, else the number you typed, else a random pick."""
+    """The name to use: what you chose in the menu, else the number you typed, else one picked for you."""
     names = list(table.reset_index(drop=True)[name_column])
     if choice.name is not None:
         print(f"Your {what}: {choice.name}.")
@@ -214,10 +237,10 @@ def resolve(choice: Choice, typed, *, table, name_column: str, what: str) -> str
             return names[number - 1]
         print(f"{typed} is not a number from 1 to {len(names)}.")
 
-    name = random_pick(names)
+    name = random_pick(names, choice.pick_seed)
     number = names.index(name) + 1
     print(
-        f"Nothing chosen yet, so the notebook picked number {number}, {name}, at random. "
+        f"Nothing chosen yet, so the notebook picked number {number}, {name}, for you. "
         f"Put {number} in MY_PICK to keep it, or choose above and run this cell again."
     )
     return name
