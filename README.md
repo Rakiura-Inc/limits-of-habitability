@@ -67,10 +67,13 @@ make data    # download the archive files into notebooks/data/ and check their c
 make run     # run every notebook with blank answers into notebooks/executed/
 ```
 
-CI runs tess_02's joint fits with 2,000 steps instead of 20,000 (the `HABTRAIN_CI_JOINT_FIT_STEPS` variable),
-so the notebook job ends in minutes. Nothing else sets that variable, so in Colab the fits always run in full.
+tess_02's joint fits run 3,000 steps by default, a few minutes each in Colab; an optional cell carries the
+worked example on to the full 20,000. Every random step is seeded (emcee, orbitize!, the random picks), so a
+run gives the same numbers every time. CI runs the notebooks exactly as a member does.
 
-`habtrain/` holds the plumbing: downloads, fits, plots, recording answers. The notebooks hold the thinking.
+`habtrain/` holds the plumbing: downloads and checksums, running emcee once notebook 4 has shown how, the
+fiddly plots, recording answers and the Rakiura connection. The notebooks hold the method and the thinking:
+the models, the likelihoods and the library calls they teach (lightkurve, astropy, emcee, batman, orbitize!).
 
 ### Why habtrain is a package
 
@@ -81,10 +84,24 @@ with hatchling. The TESS project notebooks install `habtrain[tess]`, which adds 
 (batman still imports distutils); the Gaia project notebooks install `habtrain[orbits]`, which adds orbitize!.
 Answers to the exercises are not in this repository: they open on each step in Rakiura after you hand it in.
 
+### Code adapted from community tutorials
+
+Four notebooks follow a community tutorial's steps, and one runs a tutorial's code as written. Each names its
+source where it starts, and the licences are in `LICENSES/`:
+
+| Notebook | Follows | Licence |
+|---|---|---|
+| 03 | lightkurve, "How to recover a known planet" and "Identifying transiting exoplanet signals" | MIT (`LICENSES/lightkurve.txt`) |
+| 04 | emcee, "Fitting a model to data"; RadVel, "K2-24 Fitting & MCMC" (the model) | MIT (`LICENSES/emcee.txt`, `LICENSES/radvel.txt`) |
+| tess_02 | exoplanet case study, "Fitting TESS data and radial velocities together" (written with batman and emcee) | MIT (`LICENSES/exoplanet-case-studies.txt`) |
+| gaia_01 | orbitize!, "Fitting the Hipparcos-Gaia Catalog of Accelerations" (its code, as written) | BSD 3-Clause (`LICENSES/orbitize.txt`) |
+| gaia_03 | orbitize!, "Radial Velocity Tutorial for MCMC" | BSD 3-Clause (`LICENSES/orbitize.txt`) |
+
 ### Contributing
 
 Install the git hooks with `uvx prek install`; they run on every commit, and CI runs them on every pull request.
-Committed notebooks carry no outputs: nbstripout clears them. `uv.lock` pins every dependency for the tests
+Committed notebooks carry no outputs: nbstripout clears them. `scripts/check_cells.py` checks what ruff cannot:
+cell length, probing for earlier cells' results, semicolons (see the teaching-code style in the build-lab-bootcamp skill). `uv.lock` pins every dependency for the tests
 and CI, and Renovate keeps it and the hooks and actions up to date.
 
 Code: MIT licence (see LICENSE). batman-package, used only by the TESS project notebooks, is GPL-3.0 and is
