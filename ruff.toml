@@ -93,7 +93,16 @@ select = [
     # https://docs.astral.sh/ruff/rules/#warning-w
     # https://github.com/PyCQA/pycodestyle
     "W",
-
+    # The engineering gate's limits on function size and shape (teaching-code-style U4, F7, K1).
+    # https://docs.astral.sh/ruff/rules/#mccabe-c90
+    "C90",
+    # https://docs.astral.sh/ruff/rules/#pylint-pl
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLR2004",
 ]
 ignore = [
     # Absolute imports are not always better than relative imports.
@@ -102,12 +111,34 @@ ignore = [
     # Capitalised column names (rvs.TKS == orbit["TKS"]) look like constants to this rule, so it misfires.
     # https://docs.astral.sh/ruff/rules/yoda-conditions/
     "SIM300",
+    # The teaching-code guide (rule F3) asks for a plain if/else block, not a conditional expression.
+    # https://docs.astral.sh/ruff/rules/if-else-block-instead-of-if-exp/
+    "SIM108",
 ]
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.pylint]
+max-args = 6
+max-positional-args = 4 # past this, callers pass by keyword (teaching-code-style F7)
+max-branches = 12
+max-returns = 6
+max-statements = 40
 
 [lint.per-file-ignores]
 # Use of "assert" is normal and expected in the test files.
 # https://docs.astral.sh/ruff/rules/assert/
-"**/tests/**" = ["S101"]
+"**/tests/**" = [
+    "S101",
+    # A test compares with the number it expects, written where the reader sees it.
+    "PLR2004",
+    # K, P and T0 are the papers' symbols, as in habtrain.
+    "N806",
+    # pytest hands a test its fixtures and parametrized values as arguments.
+    "PLR0913",
+    "PLR0917",
+]
 "habtrain/**" = [
     # habtrain talks to the member in the notebook's output, so print is its user interface.
     "T201",
@@ -129,8 +160,14 @@ ignore = [
     "N806",
     # The setup cell imports numpy for the member's own cells, even where the notebook itself does not use it.
     "F401",
-    # Long lines here are teaching sentences and printed messages; their wording is the content author's.
-    "E501",
+    # emcee hands a log probability its data as positional arguments, as emcee's own tutorial writes it.
+    "PLR0913",
+    "PLR0917",
+    # The teaching-code guide (rule F1) prefers a plain loop that appends to a comprehension.
+    "PERF401",
+    # A teaching cell compares with the number its markdown just gave (3 sigma, an eccentricity of 0.1),
+    # with a comment; a named constant would move that number out of the reader's sight.
+    "PLR2004",
     # A cell that cannot run yet stops with one plain sentence for the member, written where it applies.
     "EM101",
     "TRY003",

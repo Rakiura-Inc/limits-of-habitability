@@ -10,6 +10,7 @@ import pytest
 import habtrain as ht
 
 from .conftest import place
+from .notebook_code import definitions
 
 CATALOG = "J/AJ/165/34/table1.dat"
 SERIES = "J/ApJS/274/35/table3.dat.gz"
@@ -109,17 +110,16 @@ def test_well_sampled_stars_counts_only_nights_since_2005():
     assert ht.data.well_sampled_stars(series, min_obs=44) == ["busy", "quiet"]
 
 
-def test_nightly_averages_each_night_and_counts_in_years():
+def test_notebook_02s_nightly_averages_each_night_and_counts_in_years():
+    nightly = definitions("02_planet_or_star.ipynb")["nightly"]
     start = ht.data.JD_2000  # midnight, so 0.1 and 0.2 days later is the same night
     series = pd.DataFrame({
         "Name": ["A", "A", "A", "B"],
         "BJD": [start + 0.1, start + 0.2, start + 365.25, start],
         "S": [0.1, 0.3, 0.5, 9.0],
     })
-    night = ht.data.nightly(series, "A")
-    assert night.columns.tolist() == ["year", "S", "n"]
+    night = nightly(series, "A")
     assert night.S.tolist() == pytest.approx([0.2, 0.5])
-    assert night.n.tolist() == [2, 1]
     assert night.year.tolist() == pytest.approx([2000.0 + 0.15 / 365.25, 2001.0])
 
 
@@ -202,17 +202,17 @@ def test_planets_table_holds_what_you_know_before_measuring():
     assert table.planet.is_unique
 
 
-def test_star_values_fall_back_to_the_bundled_table_offline():
+def test_star_values_fall_back_to_the_bundled_table_offline(capsys):
     row = ht.data.planets().iloc[0]
     assert ht.data.star_radius(row.planet) == row.st_rad
     assert ht.data.transit_duration(row.planet) == row.pl_trandur
     assert ht.data.star_mass(row.planet) == row.st_mass
-    assert np.isnan(ht.data.star_radius("TOI-0 z"))
+    assert "did not answer, so st_rad" in capsys.readouterr().out  # it says where the value came from
 
 
-def test_star_mass_offline_for_an_unknown_planet_says_so():
-    with pytest.raises(RuntimeError, match="star mass"):
-        ht.data.star_mass("TOI-0 z")
+def test_a_planet_in_neither_the_archive_nor_the_table_says_so():
+    with pytest.raises(KeyError, match=r"not in habtrain's planets\.csv either"):
+        ht.data.star_radius("TOI-0 z")
 
 
 def test_archive_answer_is_used_and_the_name_is_quoted(archive):

@@ -65,3 +65,12 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
+
+  # Teaching-cell checks ruff cannot make: cell length, probing for earlier cells, semicolons (teaching-code style).
+  - repo: local
+    hooks:
+      - id: check-cells
+        name: check teaching cells
+        entry: python scripts/check_cells.py
+        language: python
+        files: ^notebooks/[^/]+\.ipynb$

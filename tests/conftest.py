@@ -41,7 +41,7 @@ def fresh_session(monkeypatch, tmp_path):
     for name in ("RAKIURA_KEY", "RAKIURA_STEP", "HABTRAIN_STEPS"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(ht.portal, "state", ht.portal._State(handin_dir=str(tmp_path / "handin")))
-    stores = (ht.record._answers, ht.record._predictions, ht.record._reveals)
+    stores = (ht.record._answers, ht.record._predictions, ht.record._reveals, ht.record._figures)
     for store in stores:
         store.clear()
     yield
@@ -72,7 +72,7 @@ def archive(monkeypatch):
     replies = Archive()
     replies.urls = []
 
-    def urlopen(url, timeout=None):
+    def urlopen(url, data=None, timeout=None):
         replies.urls.append(url)
         for fragment, body in replies.items():
             if fragment in url:

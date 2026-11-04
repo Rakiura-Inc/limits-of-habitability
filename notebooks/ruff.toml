@@ -1,0 +1,4 @@
+# Notebook cells at 100 characters, so a cell reads without scrolling in Colab on a laptop
+# (teaching-code-style F6). Everything else as in the repository's ruff.toml.
+extend = "../ruff.toml"
+line-length = 100
