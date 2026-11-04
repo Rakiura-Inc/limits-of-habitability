@@ -13,7 +13,8 @@ def test_reports_sort_by_last_sector_then_by_how_many_sectors_they_span():
         "tess-s0014-s0014-dvr.pdf",
         "other-dvr.pdf",
     ]
-    assert sorted(files, key=ht.vet._run_order) == [
+    reports = [{"file": file} for file in files]
+    assert [report["file"] for report in sorted(reports, key=ht.vet._run_order)] == [
         "other-dvr.pdf",
         "tess-s0014-s0014-dvr.pdf",
         "tess-s0014-s0060-dvr.pdf",
@@ -60,7 +61,9 @@ def test_tic_star_reads_mass_and_radius_with_uncertainties(monkeypatch):
             return pd.DataFrame({"mass": [0.9], "e_mass": [0.1], "rad": [0.8], "e_rad": [0.05]})
 
     monkeypatch.setattr(mast.Catalogs, "query_criteria", lambda **query: Table())
-    assert ht.vet.tic_star(42) == {"mass": (0.9, 0.1), "radius": (0.8, 0.05)}
+    star = ht.vet.tic_star(42)
+    assert star == {"mass": (0.9, 0.1), "radius": (0.8, 0.05)}
+    assert star["mass"].uncertainty == 0.1
 
 
 def test_exofop_page_links_to_the_star():

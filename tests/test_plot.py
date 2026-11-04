@@ -5,7 +5,6 @@ import sys
 import numpy as np
 import pandas as pd
 import pytest
-from matplotlib.figure import Figure
 
 import habtrain as ht
 
@@ -29,7 +28,7 @@ def catalog():
 
 
 def test_catalog_counts_each_kind_of_planet_in_the_legend(catalog):
-    fig = ht.plot.catalog(catalog, highlight=["c d"], numbers=True)
+    fig = ht.plot.catalog(catalog, highlight="c d")
     labels = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
     assert labels == [
         "radius estimated from mass (1)",
@@ -39,11 +38,12 @@ def test_catalog_counts_each_kind_of_planet_in_the_legend(catalog):
     assert fig.axes[0].get_title().endswith("(3)")
     assert ht.plot.CREDIT_CATALOG in texts(fig)
     annotations = [t.get_text() for t in fig.axes[0].texts]
-    assert {"1", "2", "3", "c d"} <= set(annotations)
+    assert "c d" in annotations
+    assert "1" not in annotations  # only the numbered catalog numbers its planets
 
 
 def test_catalog_coloured_by_temperature_has_a_colour_bar(catalog):
-    fig = ht.plot.catalog(catalog, color_by="Teff", title="Mine")
+    fig = ht.plot.catalog_by_temperature(catalog, title="Mine")
     assert fig.axes[0].get_title() == "Mine"
     assert fig.axes[1].get_ylabel() == "Star temperature (K)"
 
@@ -56,19 +56,27 @@ def test_wobbles_colours_your_planet_and_draws_the_floor(catalog):
     assert "30 cm/s" in [t.get_text() for t in fig.axes[0].texts]
 
 
-def test_activity_and_periodogram_are_one_panel_each():
-    night = pd.DataFrame({"year": [2005.0, 2006.0], "S": [0.2, 0.3]})
-    assert len(ht.plot.activity(night, "HD 1").axes) == 1
-    fig = ht.plot.periodogram([1, 2, 3], [0.1, 0.9, 0.2], "years", "Peaks", mark=2, credit="Data: me")
+def test_numbered_catalog_numbers_every_planet_and_labels_your_choice(catalog):
+    fig = ht.plot.numbered_catalog(catalog, title="Small planets", highlight="c d")
+    labels = [t.get_text() for t in fig.axes[0].texts]
+    assert labels[1:4] == ["1", "2", "3"]  # after the 0.8 line's label
+    assert labels[-1] == "c d"
+    assert fig.axes[0].get_title() == "Small planets"
+
+
+def test_periodogram_is_one_panel_with_its_credit():
+    fig = ht.plot.periodogram([1, 2, 3], [0.1, 0.9, 0.2], unit="years", title="Peaks", mark=2, credit="Data: me")
+    assert len(fig.axes) == 1
     assert fig.axes[0].get_xlabel() == "Period (years)"
     assert texts(fig) == ["Data: me"]
-    assert texts(ht.plot.periodogram([1, 2], [0.1, 0.2], "days", "No credit")) == []
+    assert texts(ht.plot.periodogram([1, 2], [0.1, 0.2], unit="days", title="No credit")) == []
 
 
-def test_velocities_adds_a_folded_panel_when_given_a_period():
-    t, v, err = ht.fit.fake_velocities(5.0, 3.0, n=20)
-    assert len(ht.plot.velocities(t, v, err).axes) == 1
-    fig = ht.plot.velocities(t, v, err, ["A"] * 10 + ["B"] * 10, P=3.0, T0=0.0, K=5.0, offsets={"A": 1.0})
+def test_velocities_adds_a_folded_panel_when_given_an_orbit():
+    days = np.linspace(0, 30, 20)
+    table = pd.DataFrame({"BJD": days, "RV": np.sin(days), "eRV": 1.0, "Inst": ["A"] * 10 + ["B"] * 10})
+    assert len(ht.plot.velocities(table).axes) == 1
+    fig = ht.plot.velocities(table, orbit={"P": 3.0, "T0": 0.0}, K=5.0, offsets={"A": 1.0})
     assert len(fig.axes) == 2
     assert fig.axes[1].get_title() == "Folded on P = 3.0000 d"
     assert len(fig.axes[1].lines) >= 1  # the fitted orbit
@@ -76,8 +84,8 @@ def test_velocities_adds_a_folded_panel_when_given_a_period():
 
 def test_corner_draws_every_pair_of_parameters():
     rng = np.random.default_rng(0)
-    fit = ht.fit.Fit(["K", "jitter"], rng.normal(size=(500, 2)), ["A"], True, 1.0, 1)
-    fig = ht.plot.corner(fit, truths={"K": 0.0}, credit="Data: me")
+    samples = pd.DataFrame(rng.normal(size=(500, 2)), columns=["K (m/s)", "jitter (m/s)"])
+    fig = ht.plot.corner(samples, truths={"K (m/s)": 0.0}, credit="Data: me")
     assert len(fig.axes) == 4
     assert "Data: me" in texts(fig)
 
@@ -146,22 +154,8 @@ def test_joint_plot_shows_transit_and_velocities():
 
 
 def test_mass_radius_widens_for_a_giant_planet():
-    small = ht.plot.mass_radius(5.0, 1.5, "mine", mass_err=1.0, radius_err=0.1)
+    small = ht.plot.mass_radius(5.0, 1.5, label="mine", mass_err=1.0)
     assert small.axes[0].get_xlim() == pytest.approx((0.5, 30))
-    giant = ht.plot.mass_radius(300.0, 11.0, "giant")
+    giant = ht.plot.mass_radius(300.0, 11.0, label="giant")
     assert giant.axes[0].get_xlim() == pytest.approx((0.5, 450))
     assert giant.axes[0].get_ylim() == pytest.approx((0.6, 14.3))
-
-
-def test_light_curve_plots_time_against_brightness():
-    class Column:
-        def __init__(self, value):
-            self.value = value
-
-    class LightCurve:
-        time = Column(np.arange(5.0))
-        flux = Column(np.ones(5))
-
-    fig = ht.plot.light_curve(LightCurve(), "Star")
-    assert isinstance(fig, Figure)
-    assert fig.axes[0].lines[0].get_xdata().tolist() == [0, 1, 2, 3, 4]
