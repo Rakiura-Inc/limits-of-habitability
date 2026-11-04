@@ -6,7 +6,7 @@ requires = [ "hatchling" ]
 name = "habtrain"
 version = "0.1.0"
 description = """\
-    Plumbing for the Limits of Habitability bootcamp notebooks: fetch the public catalogs, fit orbits, plot, record \
+    Plumbing for the Limits of Habitability bootcamp notebooks: fetch the public catalogs, run emcee, plot, record \
     answers.\
     """
 readme = "README.md"

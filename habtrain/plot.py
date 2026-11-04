@@ -6,10 +6,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import ticker
 
-from .data import EARTH_INSOLATION
-from .fit import rocky_radius
+from .constants import BTJD, EARTH_INSOLATION_W_M2
+from .fit import EARTH_CORE_FRACTION, rocky_radius
 
 LIMIT = 0.8  # Earth radii: the lab's size limit for a sun-like star (Hill et al. 2026)
+ZENG_MAX_MASS_EARTH = 8  # Zeng et al. 2016 fitted their rocky radii up to about 8 Earth masses
 
 # Earth and Neptune, from the NASA planetary fact sheet: Neptune is 17.1 Earth masses and 3.88 Earth radii.
 NEPTUNE = (17.1, 3.88)
@@ -33,11 +34,15 @@ def _credit(fig, text: str) -> None:
     fig.text(0.01, 0.005, text, fontsize=7, color=GREY)
 
 
+def _plain_number(value, _position) -> str:
+    return f"{value:g}"
+
+
 def _plain_ticks(ax):
     """Label log axes as plain numbers (0.3, 1, 10), not powers of ten, and drop the minor-tick labels."""
     for axis in (ax.xaxis, ax.yaxis):
         if axis.get_scale() == "log":
-            axis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:g}"))
+            axis.set_major_formatter(ticker.FuncFormatter(_plain_number))
             axis.set_minor_formatter(ticker.NullFormatter())
 
 
@@ -51,34 +56,32 @@ def _mass_measured(df):
     return (df.f_Mass == 0) & (df.l_Mass.fillna("").str.strip() == "")
 
 
-def catalog(
-    df, color_by: str | None = None, highlight: list | None = None, title: str | None = None, numbers: bool = False
-):
-    """Every planet's radius against the starlight it gets, with the 0.8 Earth radii line.
+def _catalog_points(fig, ax, df) -> None:
+    """Grey: radius estimated from the mass. Blue: radius measured. Red ring: mass and radius both measured."""
+    starlight = df.S / EARTH_INSOLATION_W_M2
+    estimated, measured = df.f_Rad == 1, df.f_Rad == 0
+    both = measured & _mass_measured(df)
+    ax.scatter(
+        starlight[estimated],
+        df.Rad[estimated],
+        s=14,
+        c=LIGHT_GREY,
+        label=f"radius estimated from mass ({estimated.sum()})",
+    )
+    ax.scatter(starlight[measured], df.Rad[measured], s=18, c=BLUE, label=f"radius measured ({measured.sum()})")
+    ax.scatter(
+        starlight[both],
+        df.Rad[both],
+        s=80,
+        facecolors="none",
+        edgecolors=RED,
+        linewidths=1.6,
+        label=f"mass and radius both measured ({both.sum()})",
+    )
+    ax.legend(loc="center right", fontsize=8.5, framealpha=0.95)
 
-    Grey: radius estimated from the mass. Blue: radius measured. Red ring: mass and radius both
-    measured. With color_by="Teff" the points are coloured by their star's temperature instead.
-    """
-    fig, ax = plt.subplots(figsize=(9, 6), dpi=110)
-    x = df.S / EARTH_INSOLATION
-    if color_by:
-        sc = ax.scatter(x, df.Rad, c=df[color_by], cmap="coolwarm_r", s=18, zorder=2)
-        fig.colorbar(sc, ax=ax, label="Star temperature (K)" if color_by == "Teff" else color_by)
-    else:
-        est, meas = df.f_Rad == 1, df.f_Rad == 0
-        both = meas & _mass_measured(df)
-        ax.scatter(x[est], df.Rad[est], s=14, c=LIGHT_GREY, label=f"radius estimated from mass ({est.sum()})")
-        ax.scatter(x[meas], df.Rad[meas], s=18, c=BLUE, label=f"radius measured ({meas.sum()})")
-        ax.scatter(
-            x[both],
-            df.Rad[both],
-            s=80,
-            facecolors="none",
-            edgecolors=RED,
-            linewidths=1.6,
-            label=f"mass and radius both measured ({both.sum()})",
-        )
-        ax.legend(loc="center right", fontsize=8.5, framealpha=0.95)
+
+def _catalog_limit_line(ax) -> None:
     ax.axhline(LIMIT, color=RED, ls="--", lw=1.2, zorder=0)
     ax.text(
         0.98,
@@ -89,20 +92,31 @@ def catalog(
         color=RED,
         fontsize=9,
     )
-    if numbers:  # label each point with its row number, counting from 1
-        for i, (sx, ry) in enumerate(zip(x, df.Rad, strict=True), start=1):
-            ax.annotate(str(i), (sx, ry), xytext=(3, 3), textcoords="offset points", fontsize=7.5)
-    for name in highlight or []:
-        r = df[df.Planet == name]
-        if len(r):
-            ax.annotate(
-                name,
-                (float(r.S.iloc[0]) / EARTH_INSOLATION, float(r.Rad.iloc[0])),
-                xytext=(-70, 14),
-                textcoords="offset points",
-                fontsize=8.5,
-                arrowprops={"arrowstyle": "-", "color": DARK, "lw": 0.8},
-            )
+
+
+def _point_numbers(ax, df) -> None:
+    """Label each planet with its row number, counting from 1."""
+    starlight = df.S / EARTH_INSOLATION_W_M2
+    for number, (x, y) in enumerate(zip(starlight, df.Rad, strict=True), start=1):
+        ax.annotate(str(number), (x, y), xytext=(3, 3), textcoords="offset points", fontsize=7.5)
+
+
+def _label_planet(ax, df, name: str) -> None:
+    row = df[df.Planet == name]
+    if len(row) == 0:
+        return  # a planet from another table: nothing to label here
+    position = (float(row.S.iloc[0]) / EARTH_INSOLATION_W_M2, float(row.Rad.iloc[0]))
+    ax.annotate(
+        name,
+        position,
+        xytext=(-70, 14),
+        textcoords="offset points",
+        fontsize=8.5,
+        arrowprops={"arrowstyle": "-", "color": DARK, "lw": 0.8},
+    )
+
+
+def _catalog_axes(fig, ax, df, title: str | None) -> None:
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.invert_xaxis()
@@ -114,17 +128,59 @@ def catalog(
     ax.set_title(title or f"Every known planet that spends time in its star's habitable zone ({len(df)})", fontsize=11)
     _credit(fig, CREDIT_CATALOG)
     fig.tight_layout(rect=(0, 0.02, 1, 1))
+
+
+def catalog(df, highlight: str | None = None):
+    """Every planet's radius against the starlight it gets, with the 0.8 Earth radii line.
+
+    Grey: radius estimated from the mass. Blue: radius measured. Red ring: mass and radius both
+    measured. `highlight` names one planet to label.
+    """
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=110)
+    _catalog_points(fig, ax, df)
+    _catalog_limit_line(ax)
+    if highlight is not None:
+        _label_planet(ax, df, highlight)
+    _catalog_axes(fig, ax, df, None)
+    return fig
+
+
+def catalog_by_temperature(df, title: str):
+    """The catalog plot with each planet coloured by its star's surface temperature."""
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=110)
+    points = ax.scatter(df.S / EARTH_INSOLATION_W_M2, df.Rad, c=df.Teff, cmap="coolwarm_r", s=18, zorder=2)
+    fig.colorbar(points, ax=ax, label="Star temperature (K)")
+    _catalog_limit_line(ax)
+    _catalog_axes(fig, ax, df, title)
+    return fig
+
+
+def numbered_catalog(df, title: str, highlight: str | None = None):
+    """The catalog plot with each planet numbered from 1, in table order, as the menu numbers them."""
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=110)
+    _catalog_points(fig, ax, df)
+    _catalog_limit_line(ax)
+    _point_numbers(ax, df)
+    if highlight is not None:
+        _label_planet(ax, df, highlight)
+    _catalog_axes(fig, ax, df, title)
     return fig
 
 
 def wobbles(df, floor: float, mine: str | None = None):
     """Each planet's predicted wobble, sorted, against an instrument's floor."""
-    d = df.sort_values("K").reset_index(drop=True)
+    by_wobble = df.sort_values("K").reset_index(drop=True)
+    colors = []
+    for planet in by_wobble.Planet:
+        if planet == mine:
+            colors.append(RED)
+        else:
+            colors.append(BLUE)
     fig, ax = plt.subplots(figsize=(9, 4.5), dpi=110)
-    ax.bar(range(len(d)), d.K, color=[RED if p == mine else BLUE for p in d.Planet])
+    ax.bar(range(len(by_wobble)), by_wobble.K, color=colors)
     ax.axhline(floor, color=DARK, ls="--", lw=1)
     ax.text(0, floor * 1.08, f"{floor * 100:.0f} cm/s", fontsize=9)
-    ax.set_xticks(range(len(d)), d.Planet, rotation=75, fontsize=7.5)
+    ax.set_xticks(range(len(by_wobble)), by_wobble.Planet, rotation=75, fontsize=7.5)
     ax.set_yscale("log")
     ax.set_ylabel("Predicted wobble K (m/s)")
     _plain_ticks(ax)
@@ -134,19 +190,7 @@ def wobbles(df, floor: float, mine: str | None = None):
     return fig
 
 
-def activity(night, name: str):
-    """One star's nightly S-values over the years."""
-    fig, ax = plt.subplots(figsize=(9, 3.6), dpi=110)
-    ax.plot(night.year, night.S, ".", color=BLUE, ms=5)
-    ax.set_xlabel("Year")
-    ax.set_ylabel("S-value (activity)")
-    ax.set_title(f"{name}: magnetic activity, one point per night", fontsize=11)
-    _credit(fig, CREDIT_ACTIVITY)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
-    return fig
-
-
-def periodogram(periods, power, unit: str, title: str, mark: float | None = None, credit: str | None = None):
+def periodogram(periods, power, *, unit: str, title: str, mark: float | None = None, credit: str | None = None):
     """Power against period. A tall peak is a repeating signal at that period. Pass credit for real data."""
     fig, ax = plt.subplots(figsize=(9, 3.6), dpi=110)
     ax.plot(periods, power, color=DARK, lw=1)
@@ -159,66 +203,86 @@ def periodogram(periods, power, unit: str, title: str, mark: float | None = None
     ax.set_title(title, fontsize=11)
     if credit:
         _credit(fig, credit)
-    fig.tight_layout(rect=(0, 0.04 if credit else 0, 1, 1))
+        fig.tight_layout(rect=(0, 0.04, 1, 1))  # room for the credit line
+    else:
+        fig.tight_layout(rect=(0, 0, 1, 1))
     return fig
 
 
 def velocities(
-    t,
-    v,
-    err,
-    telescopes=None,
-    P: float | None = None,
-    T0: float | None = None,
+    table,
+    *,
+    orbit: dict | None = None,
     K: float | None = None,
     offsets: dict | None = None,
     title: str = "",
     credit: str | None = None,
 ):
-    """Velocities against time, and folded on the period when P and T0 are given.
+    """Velocities against time, and folded on the orbit's period when `orbit` ({"P", "T0"}) is given.
 
-    With K and offsets from a fit, the folded panel shows the fitted orbit and each telescope's
+    `table` has the survey's columns: BJD, RV and eRV (m/s), Inst (the telescope). With K and the
+    telescopes' offsets from a fit, the folded panel shows the fitted orbit and each telescope's
     points shifted by its own offset.
     """
-    t, v, err = (np.asarray(x, float) for x in (t, v, err))
-    tel = np.asarray(telescopes if telescopes is not None else ["telescope"] * len(t))
-    names = sorted(set(tel.tolist()))
+    times, velocity, error = (table[column].to_numpy(float) for column in ("BJD", "RV", "eRV"))
+    telescope = table.Inst.to_numpy()
+    names = sorted(set(telescope.tolist()))
     colors = dict(zip(names, [BLUE, RED, GREEN], strict=False))  # up to three telescopes
-    fig, axes = plt.subplots(1, 2 if P else 1, figsize=(11 if P else 9, 3.8), dpi=110, squeeze=False)
+    if orbit is None:
+        fig, axes = plt.subplots(1, 1, figsize=(9, 3.8), dpi=110, squeeze=False)
+    else:  # a second panel for the folded velocities
+        fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), dpi=110, squeeze=False)
     ax = axes[0][0]
-    for n in names:
-        m = tel == n
-        ax.errorbar(t[m] - 2457000, v[m], err[m], fmt=".", color=colors[n], label=n, alpha=0.8)
+    for name in names:
+        mine = telescope == name
+        ax.errorbar(times[mine] - BTJD, velocity[mine], error[mine], fmt=".", color=colors[name], label=name, alpha=0.8)
     ax.set_xlabel("Time (BJD - 2457000)")
     ax.set_ylabel("Velocity (m/s)")
     ax.legend(fontsize=8)
     ax.set_title(title or "Velocities over time", fontsize=10)
-    if P:
-        ax = axes[0][1]
-        phase = ((t - T0) / P + 0.5) % 1 - 0.5
-        for n in names:
-            m = tel == n
-            shift = (offsets or {}).get(n, 0.0)
-            ax.errorbar(phase[m], v[m] - shift, err[m], fmt=".", color=colors[n], alpha=0.8)
-        if K is not None:
-            ph = np.linspace(-0.5, 0.5, 300)
-            ax.plot(ph, -K * np.sin(2 * np.pi * ph), color=DARK, lw=1.5)
-        ax.set_xlabel("Orbital phase (0 = transit)")
-        ax.set_ylabel("Velocity minus offset (m/s)")
-        ax.set_title(f"Folded on P = {P:.4f} d", fontsize=10)
+    if orbit is not None:
+        _folded_velocities(axes[0][1], table, orbit, K=K, offsets=offsets or {}, colors=colors)
     if credit:
         _credit(fig, credit)
-    fig.tight_layout(rect=(0, 0.05 if credit else 0, 1, 1))
+        fig.tight_layout(rect=(0, 0.05, 1, 1))  # room for the credit line
+    else:
+        fig.tight_layout(rect=(0, 0, 1, 1))
     return fig
 
 
-def corner(fit, truths: dict | None = None, credit: str | None = None):
-    """Every fitted parameter against every other. Truths, if given, are drawn as lines. Pass credit for real data."""
+def _folded_velocities(ax, table, orbit: dict, *, K: float | None, offsets: dict, colors: dict) -> None:
+    period = orbit["P"]
+    phase = ((table.BJD.to_numpy(float) - orbit["T0"]) / period + 0.5) % 1 - 0.5
+    telescope = table.Inst.to_numpy()
+    for name in sorted(set(telescope.tolist())):
+        mine = telescope == name
+        shifted = table.RV.to_numpy(float)[mine] - offsets.get(name, 0.0)
+        ax.errorbar(phase[mine], shifted, table.eRV.to_numpy(float)[mine], fmt=".", color=colors[name], alpha=0.8)
+    if K is not None:
+        model_phase = np.linspace(-0.5, 0.5, 300)
+        ax.plot(model_phase, -K * np.sin(2 * np.pi * model_phase), color=DARK, lw=1.5)
+    ax.set_xlabel("Orbital phase (0 = transit)")
+    ax.set_ylabel("Velocity minus offset (m/s)")
+    ax.set_title(f"Folded on P = {period:.4f} d", fontsize=10)
+
+
+def corner(samples, truths: dict | None = None, credit: str | None = None):
+    """Every fitted parameter against every other, one column of `samples` each.
+
+    `truths` ({column: value}) draws the values you made as lines. Pass credit for real data.
+    """
     import corner as corner_plot
 
-    t = [truths.get(n) for n in fit.names] if truths else None
+    truth_values = None
+    if truths:
+        truth_values = [truths.get(name) for name in samples.columns]
     fig = corner_plot.corner(
-        fit.chain, labels=fit.names, truths=t, quantiles=[0.16, 0.5, 0.84], show_titles=True, title_fmt=".2f"
+        samples.to_numpy(),
+        labels=list(samples.columns),
+        truths=truth_values,
+        quantiles=[0.16, 0.5, 0.84],
+        show_titles=True,
+        title_fmt=".2f",
     )
     if credit:
         _credit(fig, credit)
@@ -231,14 +295,16 @@ def star_map(summary, mark: dict | None = None, title: str | None = None):
     mark: {"name": label} stars to circle and label.
     """
     fig, ax = plt.subplots(figsize=(9, 6), dpi=110)
-    sc = ax.scatter(summary.BV, summary.logRhk, c=summary.variation.clip(upper=15), cmap="viridis", s=22)
-    fig.colorbar(sc, ax=ax, label="How much its activity varies (% of its typical value)")
+    variation = summary.variation.clip(upper=15)  # a few stars vary far more; keep the colour scale useful
+    points = ax.scatter(summary.BV, summary.logRhk, c=variation, cmap="viridis", s=22)
+    fig.colorbar(points, ax=ax, label="How much its activity varies (% of its typical value)")
     for name, label in (mark or {}).items():
-        r = summary[summary.Name == name]
-        if len(r):
-            x, y = float(r.BV.iloc[0]), float(r.logRhk.iloc[0])
-            ax.scatter([x], [y], s=140, facecolors="none", edgecolors=RED, linewidths=1.8)
-            ax.annotate(label, (x, y), xytext=(10, 8), textcoords="offset points", fontsize=9, color=RED)
+        star = summary[summary.Name == name]
+        if len(star) == 0:
+            continue  # a star not on this map
+        colour, activity = float(star.BV.iloc[0]), float(star.logRhk.iloc[0])
+        ax.scatter([colour], [activity], s=140, facecolors="none", edgecolors=RED, linewidths=1.8)
+        ax.annotate(label, (colour, activity), xytext=(10, 8), textcoords="offset points", fontsize=9, color=RED)
     ax.set_xlabel("Colour, B-V (smaller is bluer and hotter, bigger is redder and cooler)")
     ax.set_ylabel("Average activity, log R'HK (higher is more active)")
     ax.set_title(title or f"The {len(summary)} stars you can pick from", fontsize=11)
@@ -276,18 +342,6 @@ def star_map_interactive(summary):
     return fig
 
 
-def light_curve(lc, title: str):
-    """Brightness against time, one point every 2 minutes."""
-    fig, ax = plt.subplots(figsize=(10, 3.6), dpi=110)
-    ax.plot(lc.time.value, lc.flux.value, ".", ms=1, color=BLUE)
-    ax.set_xlabel("Time (BJD - 2457000)")
-    ax.set_ylabel("Brightness (1 = usual)")
-    ax.set_title(title, fontsize=11)
-    _credit(fig, CREDIT_TESS)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
-    return fig
-
-
 def _near_transit(hours, duration_hours: float | None):
     """True for points within three transit durations of mid-transit; every point when there is no duration."""
     if not duration_hours:
@@ -295,7 +349,7 @@ def _near_transit(hours, duration_hours: float | None):
     return np.abs(hours) < 3 * duration_hours
 
 
-def transit(hours, flux, bins=None, duration_hours: float | None = None, title: str = ""):
+def transit(hours, flux, *, bins=None, duration_hours: float | None = None, title: str = ""):
     """The folded transit: every point in grey, the binned average in blue, the transit shaded."""
     fig, ax = plt.subplots(figsize=(9, 4.2), dpi=110)
     window = _near_transit(hours, duration_hours)
@@ -325,27 +379,29 @@ def planet_map(planets, mark: str | None = None):
     Across: orbital period. Up: how bright the star looks to TESS (smaller numbers are brighter, so
     brighter stars sit higher). Size: how many velocities the survey took. Colour: one telescope or both.
     """
-    p = planets.reset_index(drop=True)
+    table = planets.reset_index(drop=True)
     fig, ax = plt.subplots(figsize=(10, 6.5), dpi=110)
-    both = p.telescopes.str.contains("APF") & p.telescopes.str.contains("HIRES")
-    size = 15 + 1.2 * p.velocities
-    ax.scatter(p.P_days[~both], p.sy_tmag[~both], s=size[~both], c=BLUE, alpha=0.75, label="HIRES only")
-    ax.scatter(p.P_days[both], p.sy_tmag[both], s=size[both], c=RED, alpha=0.75, label="HIRES and APF")
-    for i, r in p.iterrows():
+    both = table.telescopes.str.contains("APF") & table.telescopes.str.contains("HIRES")
+    size = 15 + 1.2 * table.velocities  # point area grows with the number of velocities
+    ax.scatter(table.P_days[~both], table.sy_tmag[~both], s=size[~both], c=BLUE, alpha=0.75, label="HIRES only")
+    ax.scatter(table.P_days[both], table.sy_tmag[both], s=size[both], c=RED, alpha=0.75, label="HIRES and APF")
+    for number, planet in enumerate(table.itertuples(), start=1):
+        weight = "normal"
+        if planet.planet == mark:
+            weight = "bold"
         ax.annotate(
-            str(i + 1),
-            (r.P_days, r.sy_tmag),
+            str(number),
+            (planet.P_days, planet.sy_tmag),
             xytext=(5, 4),
             textcoords="offset points",
             fontsize=8.5,
-            fontweight="bold" if r.planet == mark else "normal",
+            fontweight=weight,
         )
-    chosen = p.planet == mark
-    if mark is not None and chosen.any():
-        r = p[chosen].iloc[0]
-        ax.scatter(
-            [r.P_days], [r.sy_tmag], s=size[chosen].iloc[0] * 2.2, facecolors="none", edgecolors=DARK, linewidths=1.8
-        )
+    chosen = table.planet == mark
+    if chosen.any():
+        planet = table[chosen].iloc[0]
+        ring_size = size[chosen].iloc[0] * 2.2
+        ax.scatter([planet.P_days], [planet.sy_tmag], s=ring_size, facecolors="none", edgecolors=DARK, linewidths=1.8)
     ax.set_xscale("log")
     ax.invert_yaxis()
     ax.set_xlabel("Orbital period (days)")
@@ -358,59 +414,67 @@ def planet_map(planets, mark: str | None = None):
     return fig
 
 
-def joint(c: dict, title: str):
-    """The joint fit: the folded transit with its model (left), the folded velocities with theirs (right)."""
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.2), dpi=110)
-    a1.plot(c["data_hours"], c["data_flux"], ".", ms=1.5, color=LIGHT_GREY)
-    a1.plot(c["hours"], c["flux"], color=RED, lw=1.6)
-    a1.set_xlabel("Hours from mid-transit")
-    a1.set_ylabel("Brightness minus 1 (parts per thousand)")
-    a1.set_title("Transit", fontsize=10)
+def joint(curves: dict, title: str):
+    """The joint fit: the folded transit with its model (left), the folded velocities with theirs (right).
+
+    `curves` holds the model curves and the data, as tess_02's fitted_curves() returns them.
+    """
+    fig, (transit_ax, velocity_ax) = plt.subplots(1, 2, figsize=(12, 4.2), dpi=110)
+    transit_ax.plot(curves["data_hours"], curves["data_flux"], ".", ms=1.5, color=LIGHT_GREY)
+    transit_ax.plot(curves["hours"], curves["flux"], color=RED, lw=1.6)
+    transit_ax.set_xlabel("Hours from mid-transit")
+    transit_ax.set_ylabel("Brightness minus 1 (parts per thousand)")
+    transit_ax.set_title("Transit", fontsize=10)
     colors = {"HIRES": BLUE, "APF": GREEN}
-    for t in sorted(set(c["telescope"])):
-        m = np.asarray(c["telescope"]) == t
-        a2.errorbar(
-            c["data_phase"][m],
-            c["data_rv"][m],
-            c["data_rv_err"][m],
+    telescope = np.asarray(curves["telescope"])
+    for name in sorted(set(telescope)):
+        mine = telescope == name
+        velocity_ax.errorbar(
+            curves["data_phase"][mine],
+            curves["data_rv"][mine],
+            curves["data_rv_err"][mine],
             fmt=".",
-            color=colors.get(t, DARK),
-            label=t,
+            color=colors.get(name, DARK),
+            label=name,
             alpha=0.8,
         )
-    a2.plot(c["phase"], c["rv"], color=RED, lw=1.6)
-    a2.set_xlabel("Orbital phase (0 = transit)")
-    a2.set_ylabel("Velocity minus offset (m/s)")
-    a2.set_title("Velocities", fontsize=10)
-    a2.legend(fontsize=8)
+    velocity_ax.plot(curves["phase"], curves["rv"], color=RED, lw=1.6)
+    velocity_ax.set_xlabel("Orbital phase (0 = transit)")
+    velocity_ax.set_ylabel("Velocity minus offset (m/s)")
+    velocity_ax.set_title("Velocities", fontsize=10)
+    velocity_ax.legend(fontsize=8)
     fig.suptitle(title, fontsize=11)
     _credit(fig, CREDIT_JOINT)
     fig.tight_layout(rect=(0, 0.03, 1, 0.96))
     return fig
 
 
-def mass_radius(mass, radius, label: str, mass_err=None, radius_err=None):
+def mass_radius(mass, radius, *, label: str, mass_err=None):
     """Your planet's mass and radius against what rock could make.
 
     The biggest a rocky planet can be (no iron core) and an Earth-like mix, from Zeng et al. 2016,
     with Earth and Neptune for reference.
     """
-    top_m = max(30, 1.5 * float(mass))  # widen the plot for giant planets
-    top_r = max(5, 1.3 * float(radius))
-    m = np.logspace(np.log10(0.5), np.log10(top_m), 200)
+    top_mass = max(30, 1.5 * float(mass))  # widen the plot for giant planets
+    top_radius = max(5, 1.3 * float(radius))
+    masses = np.logspace(np.log10(0.5), np.log10(top_mass), 200)
     fig, ax = plt.subplots(figsize=(8, 5.5), dpi=110)
-    ax.plot(m, rocky_radius(m, 0.0), color=BROWN, lw=1.6, label="biggest a rocky planet can be (no iron)")
-    ax.plot(m, rocky_radius(m, 0.325), color=BROWN, lw=1.2, ls="--", label="rock and iron like Earth")
-    ax.axvspan(8, top_m, color="#eeeeee", zorder=0)
+    ax.plot(masses, rocky_radius(masses, 0.0), color=BROWN, lw=1.6, label="biggest a rocky planet can be (no iron)")
+    earth_like = rocky_radius(masses, EARTH_CORE_FRACTION)
+    ax.plot(masses, earth_like, color=BROWN, lw=1.2, ls="--", label="rock and iron like Earth")
+    ax.axvspan(ZENG_MAX_MASS_EARTH, top_mass, color="#eeeeee", zorder=0)
     ax.text(8.3, 0.62, "beyond the fitted range", fontsize=8, color="#777")
     ax.scatter([1, NEPTUNE[0]], [1, NEPTUNE[1]], color="#555", s=25, zorder=3)
     ax.annotate("Earth", (1, 1), xytext=(6, -12), textcoords="offset points", fontsize=8.5)
     ax.annotate("Neptune", NEPTUNE, xytext=(6, 4), textcoords="offset points", fontsize=8.5)
+    mass_bar = None
+    if mass_err is not None:
+        mass_bar = [[mass_err]]
     ax.errorbar(
         [mass],
         [radius],
-        xerr=None if mass_err is None else [[mass_err]],
-        yerr=None if radius_err is None else [[radius_err]],
+        xerr=mass_bar,
+        yerr=None,
         fmt="o",
         color=RED,
         ms=8,
@@ -419,10 +483,10 @@ def mass_radius(mass, radius, label: str, mass_err=None, radius_err=None):
     )
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlim(0.5, top_m)
-    ax.set_ylim(0.6, top_r)
-    ax.set_xticks([t for t in (0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500) if t <= top_m])
-    ax.set_yticks([t for t in (0.6, 1, 2, 3, 4, 5, 8, 12, 16, 20) if t <= top_r])
+    ax.set_xlim(0.5, top_mass)
+    ax.set_ylim(0.6, top_radius)
+    ax.set_xticks([tick for tick in (0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500) if tick <= top_mass])
+    ax.set_yticks([tick for tick in (0.6, 1, 2, 3, 4, 5, 8, 12, 16, 20) if tick <= top_radius])
     _plain_ticks(ax)
     ax.set_xlabel("Mass (Earth masses)")
     ax.set_ylabel("Radius (Earth radii)")
