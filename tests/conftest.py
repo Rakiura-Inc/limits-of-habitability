@@ -60,6 +60,7 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
     monkeypatch.setattr(urllib.request, "urlretrieve", refuse)
+    monkeypatch.setattr(ht.data, "ARCHIVE_RETRY_WAITS", (0, 0))  # ask again at once, so tests stay fast
 
 
 @pytest.fixture
