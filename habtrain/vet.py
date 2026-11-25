@@ -75,7 +75,10 @@ def gaia_neighbours(ra: float, dec: float, radius_arcsec: float = TWO_TESS_PIXEL
     try:
         job = Gaia.launch_job(_neighbours_query("gaiadr3.gaia_source", ra, dec, radius_arcsec))
         return job.get_results().to_pandas()
-    except DOWNLOAD_ERRORS:  # requests' errors, a 503 among them, are OSErrors
+    except (
+        *DOWNLOAD_ERRORS,
+        ValueError,
+    ):  # a 503 is an OSError; a maintenance page in place of the table is a ValueError
         print("ESA's Gaia archive did not answer, so the neighbours come from GAVO's copy of Gaia DR3.")
     try:
         return _neighbours_from_gavo(_neighbours_query("gaia.dr3lite", ra, dec, radius_arcsec))

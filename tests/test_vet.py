@@ -68,6 +68,18 @@ def test_gaia_neighbours_come_from_gavo_when_esa_does_not_answer(monkeypatch, ar
     assert "GAVO's copy of Gaia DR3" in capsys.readouterr().out
 
 
+def test_gaia_neighbours_come_from_gavo_when_esa_sends_a_maintenance_page(monkeypatch, archive):
+    gaia = pytest.importorskip("astroquery.gaia")
+
+    def maintenance_page(query):
+        msg = "1:0: syntax error"  # what astroquery raises when ESA answers with a web page, not a table
+        raise ValueError(msg)
+
+    monkeypatch.setattr(gaia.Gaia, "launch_job", maintenance_page)
+    archive["dc.zah.uni-heidelberg.de"] = b"source_id,phot_g_mean_mag,ruwe,sep_arcsec\n7,12.5,1.01,3.2\n"
+    assert ht.vet.gaia_neighbours(10.0, -5.0).source_id.tolist() == [7]
+
+
 def test_gaia_neighbours_say_to_wait_when_neither_archive_answers(monkeypatch):
     gaia = pytest.importorskip("astroquery.gaia")
 
