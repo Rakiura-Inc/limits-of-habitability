@@ -202,12 +202,12 @@ def _record(part: str, names: list[str]) -> dict:
 
 
 HANDIN_HOWTO = (
-    "To hand in: open this step in Rakiura, press Hand in, and attach these files or paste the table. "
-    "In Colab the folder is in the Files panel on the left; right-click a file to download it."
+    "To hand in: save this notebook to your fork of the lab's repository on GitHub (in Colab, File > Save a copy "
+    "in GitHub), then open this step in Rakiura, press Hand in and paste the link to the notebook."
 )
 HANDIN_CONNECTED_WITH_PLOTS = (
     "If you connected this notebook to Rakiura, your plots are already on the step. "
-    "Attach results.md or paste the table, then press Hand in."
+    "Hand in the link to your saved notebook as usual."
 )
 
 
