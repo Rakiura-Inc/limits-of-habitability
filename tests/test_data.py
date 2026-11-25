@@ -2,6 +2,7 @@
 
 import gzip
 import hashlib
+import urllib.request
 
 import numpy as np
 import pandas as pd
@@ -9,7 +10,7 @@ import pytest
 
 import habtrain as ht
 
-from .conftest import place
+from .conftest import FakeResponse, place
 from .notebook_code import definitions
 
 CATALOG = "J/AJ/165/34/table1.dat"
@@ -233,9 +234,35 @@ def test_star_reads_the_tic_number_and_averages_the_uncertainties(archive):
     assert star["radius"] == pytest.approx((0.9, 0.03))
 
 
-def test_star_offline_says_to_try_again():
+def test_star_offline_comes_from_the_bundled_table(capsys):
+    row = ht.data.planets().iloc[0]
+    star = ht.data.star(row.planet)
+    assert star["tic"] == int(row.tic_id)
+    assert (star["ra"], star["dec"]) == (row.ra, row.dec)
+    assert star["mass"] == pytest.approx((row.st_mass, (row.st_masserr1 - row.st_masserr2) / 2))
+    assert star["radius"] == pytest.approx((row.st_rad, (row.st_raderr1 - row.st_raderr2) / 2))
+    assert "star comes from planets.csv" in capsys.readouterr().out
+
+
+def test_star_offline_for_a_planet_not_in_the_table_says_to_try_again():
     with pytest.raises(RuntimeError, match="Wait a minute"):
-        ht.data.star("TOI-1 b")
+        ht.data.star("TOI-0 z")
+
+
+def test_the_archive_is_asked_again_after_a_failed_answer(monkeypatch):
+    answers = [OSError("HTTP Error 525"), FakeResponse(b"st_rad\n1.5\n")]
+    asked = []
+
+    def urlopen(url, timeout=None):
+        asked.append(url)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert ht.data.star_radius("TOI-1 b") == 1.5
+    assert len(asked) == 2
 
 
 def test_fetch_downloads_unzips_caches_and_warns_about_a_changed_file(archive, cache, capsys, monkeypatch):

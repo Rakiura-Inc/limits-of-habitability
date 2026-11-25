@@ -22,6 +22,7 @@ import hashlib
 import http.client
 import io
 import os
+import time
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -41,6 +42,7 @@ MIRROR_NAME = "its mirror in Japan (vizier.nao.ac.jp)"
 DOWNLOAD_TIMEOUT_SECONDS = 20  # how long to wait for an archive that does not answer
 ARCHIVE_TAP = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?"
 ARCHIVE_TIMEOUT_SECONDS = 30  # the NASA archive answers a query more slowly than CDS sends a file
+ARCHIVE_RETRY_WAITS = (2, 5)  # seconds to wait before asking the archive again after a failed answer
 CACHE = os.environ.get("HABTRAIN_DATA", "data")
 PLANETS_CSV = Path(__file__).with_name("planets.csv")
 ARCHIVE_FILES_CSV = Path(__file__).with_name("archive_files.csv")
@@ -364,8 +366,9 @@ def planets() -> pd.DataFrame:
     """The planets the notebooks let you measure, with what you can know before measuring them.
 
     One planet per star, on a circular orbit with no long-term trend, from the TESS-Keck Survey
-    release, joined with star properties from the NASA Exoplanet Archive (read 2026-10-25). Holds no
-    published radius, wobble or mass: those are what you measure.
+    release, joined with star properties from the NASA Exoplanet Archive (read 2026-10-25; the star's
+    TIC number, position and mass and radius uncertainties read 2026-11-25). Holds no published planet
+    radius, wobble or mass: those are what you measure.
     """
     return pd.read_csv(PLANETS_CSV)
 
@@ -385,8 +388,17 @@ def _archive_csv(columns: str, planet: str) -> str:
     name = planet.replace("'", "''")  # quote the name the way ADQL quotes strings
     query = f"select {columns} from pscomppars where pl_name='{name}'"  # noqa: S608 - a read-only public archive
     url = ARCHIVE_TAP + urllib.parse.urlencode({"query": query, "format": "csv"})
-    with urllib.request.urlopen(url, timeout=ARCHIVE_TIMEOUT_SECONDS) as response:  # noqa: S310 - a fixed https URL
-        return response.read().decode()
+    # The archive sometimes fails for a few seconds (an error page, a dropped connection), so ask
+    # again after a short wait before giving up.
+    for wait in (*ARCHIVE_RETRY_WAITS, None):
+        try:
+            with urllib.request.urlopen(url, timeout=ARCHIVE_TIMEOUT_SECONDS) as response:  # noqa: S310 - a fixed https URL
+                return response.read().decode()
+        except DOWNLOAD_ERRORS:
+            if wait is None:
+                raise
+            time.sleep(wait)
+    raise AssertionError  # unreachable: the last attempt either returns or raises
 
 
 def _archive_value(planet: str, column: str) -> float:
@@ -440,14 +452,18 @@ def star(planet: str) -> dict:
     """
     columns = "tic_id,ra,dec,st_mass,st_masserr1,st_masserr2,st_rad,st_raderr1,st_raderr2"
     try:
-        answer = _archive_csv(columns, planet)
+        row = pd.read_csv(io.StringIO(_archive_csv(columns, planet))).iloc[0]
     except DOWNLOAD_ERRORS as error:
-        msg = (
-            f"Could not reach the NASA Exoplanet Archive for {planet}'s star ({error}). "
-            "Wait a minute and run the cell again."
-        )
-        raise RuntimeError(msg) from None
-    row = pd.read_csv(io.StringIO(answer)).iloc[0]
+        table = planets()
+        saved = table[table.planet == planet]
+        if len(saved) == 0:
+            msg = (
+                f"Could not reach the NASA Exoplanet Archive for {planet}'s star ({error}). "
+                "Wait a minute and run the cell again."
+            )
+            raise RuntimeError(msg) from None
+        print(f"The NASA Exoplanet Archive did not answer, so {planet}'s star comes from planets.csv.")
+        row = saved.iloc[0]
     return {
         "tic": int(str(row.tic_id).replace("TIC", "").strip()),
         "ra": float(row.ra),
